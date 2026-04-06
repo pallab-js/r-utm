@@ -1,0 +1,60 @@
+{
+  "name": "vibevisor",
+  "version": "1.0.0",
+  "description": "High-performance virtualization for Apple Silicon",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pallab-js/r-utm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pallab-js/r-utm/issues"
+  },
+  "homepage": "https://github.com/pallab-js/r-utm#readme",
+  "keywords": [
+    "virtualization",
+    "qemu",
+    "apple-silicon",
+    "tauri",
+    "svelte",
+    "vm",
+    "hypervisor",
+    "macos",
+    "rust",
+    "virtual-machine",
+    "aarch64",
+    "spice"
+  ],
+  "author": "VibeVisor Contributors",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "tauri": "tauri"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.0",
+    "@tauri-apps/plugin-fs": "^2.5.0",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.9",
+    "@sveltejs/kit": "^2.20.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@tauri-apps/cli": "^2",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
+  },
+  "overrides": {
+    "cookie": "^0.7.0"
+  }
+}

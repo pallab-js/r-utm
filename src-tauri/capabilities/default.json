@@ -1,0 +1,43 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-set-focus",
+    "core:tray:default",
+    "core:tray:allow-new",
+    "core:tray:allow-set-icon",
+    "core:tray:allow-set-menu",
+    "core:tray:allow-set-tooltip",
+    "core:menu:default",
+    "core:menu:allow-new",
+    "core:menu:allow-popup",
+    "opener:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "fs:default",
+    "fs:allow-read",
+    "fs:allow-write",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$HOME/**",
+        "$APPDATA/**",
+        "$LOCALAPPDATA/**",
+        "$RESOURCE/**",
+        "$TEMP/**"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test-and-build:
+    name: Test & Build
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo target
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting (Rust)
+        working-directory: src-tauri
+        run: cargo fmt -- --check
+
+      - name: Run Clippy (Rust linting)
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test --verbose
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
+
+      - name: Svelte type check
+        run: npm run check
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-output
+          path: build/
+          retention-days: 7
+
+  security-audit:
+    name: Security Audit
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        working-directory: src-tauri
+        run: cargo audit || true
+
+      - name: Run npm audit
+        run: npm audit --json || true
+
+  check-commits:
+    name: Commit Message Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit messages
+        run: |
+          git log --format='%s' origin/main..HEAD | grep -E '^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?:' || echo "Warning: Some commits don't follow conventional commit format"
