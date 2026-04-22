@@ -7,11 +7,11 @@
 [![Rust](https://img.shields.io/badge/Rust-Memory%20Safe-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> High-performance virtualization for Apple Silicon (M1/M2/M3/M4) built with Rust and Tauri.
+> High-performance Linux ARM64 virtualization for Apple Silicon (M1/M2/M3/M4) built with Rust and Tauri.
 
 ## Overview
 
-VibeVisor is a lightweight, memory-secure virtualization apparatus engineered for macOS on Apple Silicon. It uses a curated QEMU backend with Rust-based control logic for a professional, high-velocity user experience.
+VibeVisor is a lightweight, memory-secure virtualization apparatus engineered for running Linux ARM64 VMs on macOS Apple Silicon. It uses a curated QEMU backend with Rust-based control logic for a professional, high-velocity user experience.
 
 **Why VibeVisor?**
 

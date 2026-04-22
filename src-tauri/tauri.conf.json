@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "VibeVisor",
+        "title": "VibeVisor — Linux ARM64 VMs on Apple Silicon",
         "label": "main",
         "width": 1200,
         "height": 800,
@@ -36,7 +36,14 @@
           "permissions": [
             "core:default",
             "dialog:default",
-            "fs:default",
+            {
+              "identifier": "fs:allow-read",
+              "allow": [{"path": "$HOME/**"}]
+            },
+            {
+              "identifier": "fs:allow-write",
+              "allow": [{"path": "$APPDATA/**"}, {"path": "$HOME/Library/Application Support/VibeVisor/**"}]
+            },
             "opener:default"
           ]
         }
@@ -60,8 +67,8 @@
       "minimumSystemVersion": "14.0",
       "entitlements": "vibe.entitlements"
     },
-    "shortDescription": "High-performance virtualization for Apple Silicon",
-    "longDescription": "VibeVisor is a high-performance, memory-secure virtualization apparatus engineered for macOS on Apple Silicon. Built with Rust and Tauri for a professional, low-overhead experience.",
+    "shortDescription": "Linux ARM64 virtualization for Apple Silicon",
+    "longDescription": "VibeVisor is a high-performance, memory-secure virtualization apparatus for running Linux ARM64 VMs on macOS Apple Silicon. Built with Rust and Tauri for a professional, low-overhead experience.",
     "category": "DeveloperTool",
     "publisher": "VibeVisor"
   },

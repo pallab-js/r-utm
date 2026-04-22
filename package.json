@@ -26,7 +26,6 @@
     "spice"
   ],
   "author": "VibeVisor Contributors",
-  "license": "MIT",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",

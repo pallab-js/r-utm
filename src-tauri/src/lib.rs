@@ -14,7 +14,7 @@ use vibe_core::cores::{CpuTopology, CoreAllocator, CoreAllocationRequest, CoreAl
 use vibe_core::security::{
     create_secure_temp_dir, 
     inspect_archive, 
-    is_path_safe
+    is_path_safe,
 };
 use vibe_core::rate_limiter::CommandRateLimiter;
 use tauri::{
@@ -23,6 +23,12 @@ use tauri::{
     Manager,
     Emitter,
 };
+
+macro_rules! audit_log {
+    ($($arg:tt)*) => {
+        tracing::info!(target: "audit", $($arg)*)
+    }
+}
 
 fn find_qemu_binary(name: &str) -> PathBuf {
     let search_paths = [
@@ -228,7 +234,19 @@ async fn create_vm(
         .map_err(|e: vibe_core::Error| e.to_string())?;
 
     if let Some(iso) = iso_path {
-        config.storage.boot_iso = Some(PathBuf::from(iso));
+        if iso.is_empty() {
+            return Err("ISO path cannot be empty".to_string());
+        }
+        let iso_path_buf = PathBuf::from(&iso);
+        if !iso_path_buf.exists() {
+            return Err("ISO file does not exist".to_string());
+        }
+        let home_dir = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+        if !is_path_safe(&iso_path_buf, &home_dir) {
+            return Err("ISO path must be within home directory and cannot contain traversal sequences".to_string());
+        }
+        config.storage.boot_iso = Some(iso_path_buf);
+        audit_log!("Security audit: ISO path validated for VM creation: {}", iso);
     }
 
     let vm = VmInstance {
@@ -244,6 +262,7 @@ async fn create_vm(
 
     state.save_vm_config(&config.id).await?;
 
+    audit_log!("Security: VM created - id={}, name={}", config.id, name);
     tracing::info!("Created VM: {} ({})", name, config.id);
     Ok(config)
 }
@@ -276,6 +295,7 @@ async fn start_vm(
     drop(vm_guard);
     state.monitor.add_vm(vm_id.clone(), pid).await;
     
+    audit_log!("Security: VM started - id={}, pid={}", vm_id, pid);
     tracing::info!("Started VM: {} (PID: {})", vm_id, pid);
     Ok(())
 }
@@ -359,15 +379,28 @@ async fn delete_vm(
     vm_id: String,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    let mut vms = state.vms.write().await;
-    let vm = vms.remove(&vm_id).ok_or_else(|| "VM not found".to_string())?;
+    let vms = state.vms.read().await;
+    let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
     let vm_data = vm.read().await;
     
-    let _ = std::fs::remove_file(&vm_data.config.storage.disk_path);
+    if vm_data.state == VmState::Running {
+        return Err("Cannot delete a running VM. Please stop it first.".to_string());
+    }
+    
+    let disk_path = vm_data.config.storage.disk_path.clone();
+    drop(vm_data);
+    drop(vms);
+    
+    let mut vms = state.vms.write().await;
+    let vm = vms.remove(&vm_id).ok_or_else(|| "VM not found".to_string())?;
+    drop(vm);
+    
+    let _ = std::fs::remove_file(&disk_path);
     let _ = std::fs::remove_file(state.get_config_path(&vm_id));
     
     state.monitor.remove_vm(&vm_id).await;
     
+    audit_log!("Security audit: VM deleted: {}", vm_id);
     tracing::info!("Deleted VM: {}", vm_id);
     Ok(())
 }
@@ -420,11 +453,14 @@ async fn update_vm(
     vm_guard.config.hardware.memory_mb = memory_mb;
     vm_guard.config.storage.disk_size_gb = disk_size_gb;
     vm_guard.config.network.enabled = network_enabled;
-    vm_guard.config.network.mode = match network_mode.to_lowercase().as_str() {
+    let normalized_mode = network_mode.to_lowercase();
+    let network_mode_enum = match normalized_mode.as_str() {
         "bridged" => vibe_core::config::NetworkMode::Bridged,
         "shared" => vibe_core::config::NetworkMode::Shared,
-        _ => vibe_core::config::NetworkMode::Nat,
+        "nat" => vibe_core::config::NetworkMode::Nat,
+        _ => return Err("Invalid network_mode. Must be 'nat', 'bridged', or 'shared'".to_string()),
     };
+    vm_guard.config.network.mode = network_mode_enum;
     vm_guard.config.display.resolution.width = display_width;
     vm_guard.config.display.resolution.height = display_height;
     
@@ -434,6 +470,7 @@ async fn update_vm(
     state.save_vm_config(&vm_id).await?;
     
     tracing::info!("Updated VM: {}", vm_id);
+    audit_log!("Security: VM updated - id={}", vm_id);
     Ok(())
 }
 
@@ -499,6 +536,7 @@ async fn export_vm(
     // TempDir automatically cleans up when dropped
     
     tracing::info!("Exported VM {} to {}", vm_id, archive_path.display());
+    audit_log!("Security: VM exported - id={}, path={}", vm_id, archive_path.display());
     Ok(archive_path.to_string_lossy().to_string())
 }
 
@@ -627,6 +665,7 @@ async fn import_vm(
     vms.insert(new_id.clone(), Arc::new(RwLock::new(vm)));
 
     tracing::info!("Imported VM as {}", new_id);
+    audit_log!("Security: VM imported - old_id={}, new_id={}", new_id, new_id);
     Ok(new_config)
 }
 
