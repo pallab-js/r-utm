@@ -1,6 +1,6 @@
 # VibeVisor
 
-[![CI](https://github.com/pallab-js/r-utm/actions/workflows/ci.yml/badge.svg)](https://github.com/pallab-js/r-utm/actions/workflows/ci.yml)
+[![CI](https://github.com/pallab-js/r-utm/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pallab-js/r-utm/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-36%20passing-brightgreen.svg)](src-tauri/src/vibe_core/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
