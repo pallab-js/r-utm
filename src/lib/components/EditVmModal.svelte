@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { untrack } from "svelte";
 
   interface VmConfig {
     name: string;
@@ -32,14 +33,18 @@
 
   let { vm, onClose, onSave }: Props = $props();
 
-  let name = $state(vm.name);
-  let cpuCores = $state(vm.hardware.cpu_cores);
-  let memoryMb = $state(vm.hardware.memory_mb);
-  let diskSizeGb = $state(vm.storage.disk_size_gb);
-  let networkEnabled = $state(vm.network.enabled);
-  let networkMode = $state(vm.network.mode);
-  let displayWidth = $state(vm.display.resolution.width);
-  let displayHeight = $state(vm.display.resolution.height);
+  // Seed the form fields from the VM prop's initial value. The modal is opened
+  // fresh per edit, so capturing the initial value is intentional; untrack()
+  // reads it without creating a reactive dependency, avoiding Svelte's
+  // `state_referenced_locally` lint.
+  let name = $state(untrack(() => vm.name));
+  let cpuCores = $state(untrack(() => vm.hardware.cpu_cores));
+  let memoryMb = $state(untrack(() => vm.hardware.memory_mb));
+  let diskSizeGb = $state(untrack(() => vm.storage.disk_size_gb));
+  let networkEnabled = $state(untrack(() => vm.network.enabled));
+  let networkMode = $state(untrack(() => vm.network.mode));
+  let displayWidth = $state(untrack(() => vm.display.resolution.width));
+  let displayHeight = $state(untrack(() => vm.display.resolution.height));
 
   let saving = $state(false);
   let error = $state<string | null>(null);
