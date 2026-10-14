@@ -1,11 +1,11 @@
 //! QEMU Machine Protocol (QMP) client for VibeVisor
 
+use crate::vibe_core::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use crate::vibe_core::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -51,51 +51,57 @@ pub struct QmpClient {
 }
 
 impl QmpClient {
-    /// Create a new QMP client with a specific socket path
+    /// Create a new QMP client with a specific socket path.
     pub fn with_socket_path(socket_path: PathBuf) -> Self {
         Self { socket_path }
     }
-    
-    /// Create a new QMP client using the legacy socket path format
-    /// (for backward compatibility - deprecated)
-    pub fn new(vm_id: &str) -> Self {
-        Self {
-            socket_path: PathBuf::from(format!("/tmp/vibevisor-{}.sock", vm_id)),
-        }
-    }
 
     pub async fn connect(&self) -> Result<()> {
-        let mut stream = UnixStream::connect(&self.socket_path).await
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
 
         let mut reader = BufReader::new(&mut stream).lines();
-        let greeting = reader.next_line().await
+        let greeting = reader
+            .next_line()
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?
             .ok_or_else(|| crate::vibe_core::Error::QmpComm("Empty greeting".to_string()))?;
 
         tracing::debug!("QMP greeting: {}", greeting);
 
         let handshake = r#"{"execute": "qmp_capabilities"}"#;
-        stream.write_all(handshake.as_bytes()).await
+        stream
+            .write_all(handshake.as_bytes())
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
-        stream.write_all(b"\n").await
+        stream
+            .write_all(b"\n")
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
 
         Ok(())
     }
 
     pub async fn query_status(&self) -> Result<VmState> {
-        let mut stream = UnixStream::connect(&self.socket_path).await
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
 
         let cmd = r#"{"execute": "query-status"}"#;
-        stream.write_all(cmd.as_bytes()).await
+        stream
+            .write_all(cmd.as_bytes())
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
-        stream.write_all(b"\n").await
+        stream
+            .write_all(b"\n")
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
 
         let mut reader = BufReader::new(stream).lines();
-        let response = reader.next_line().await
+        let response = reader
+            .next_line()
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?
             .ok_or_else(|| crate::vibe_core::Error::QmpComm("No response".to_string()))?;
 
@@ -129,13 +135,18 @@ impl QmpClient {
     }
 
     async fn send_command(&self, cmd: &str) -> Result<()> {
-        let mut stream = UnixStream::connect(&self.socket_path).await
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
 
         let json_cmd = format!(r#"{{"execute": "{}"}}"#, cmd);
-        stream.write_all(json_cmd.as_bytes()).await
+        stream
+            .write_all(json_cmd.as_bytes())
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
-        stream.write_all(b"\n").await
+        stream
+            .write_all(b"\n")
+            .await
             .map_err(|e| crate::vibe_core::Error::QmpComm(e.to_string()))?;
 
         Ok(())

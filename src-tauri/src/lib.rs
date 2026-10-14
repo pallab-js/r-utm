@@ -3,26 +3,21 @@ pub mod vibe_core;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use vibe_core::config::VmConfig;
-use vibe_core::qmp::VmState;
-use vibe_core::launcher::QemuLauncher;
-use vibe_core::qmp::QmpClient;
-use vibe_core::storage::StorageManager;
-use vibe_core::monitor::MonitoringManager;
-use vibe_core::cores::{CpuTopology, CoreAllocator, CoreAllocationRequest, CoreAllocation};
-use vibe_core::security::{
-    create_secure_temp_dir, 
-    inspect_archive, 
-    is_path_safe,
-};
-use vibe_core::rate_limiter::CommandRateLimiter;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
-    Emitter,
+    Emitter, Manager,
 };
+use tokio::sync::RwLock;
+use vibe_core::config::VmConfig;
+use vibe_core::cores::{CoreAllocation, CoreAllocationRequest, CoreAllocator, CpuTopology};
+use vibe_core::launcher::QemuLauncher;
+use vibe_core::monitor::MonitoringManager;
+use vibe_core::qmp::QmpClient;
+use vibe_core::qmp::VmState;
+use vibe_core::rate_limiter::CommandRateLimiter;
+use vibe_core::security::{create_secure_temp_dir, inspect_archive, is_path_safe};
+use vibe_core::storage::StorageManager;
 
 macro_rules! audit_log {
     ($($arg:tt)*) => {
@@ -35,7 +30,11 @@ fn find_qemu_binary(name: &str) -> PathBuf {
         PathBuf::from(&format!("/usr/local/bin/{}", name)),
         PathBuf::from(&format!("/opt/homebrew/bin/{}", name)),
         PathBuf::from(&format!("/opt/local/bin/{}", name)),
-        PathBuf::from(format!("{}/sidecars/qemu/{}", env!("CARGO_MANIFEST_DIR"), name)),
+        PathBuf::from(format!(
+            "{}/sidecars/qemu/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        )),
         PathBuf::from(format!("./src-tauri/sidecars/qemu/{}", name)),
         PathBuf::from(name),
     ];
@@ -51,16 +50,30 @@ fn find_qemu_binary(name: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// Runtime connection details for a running VM, populated at launch and
+/// cleared on stop. Needed so control-plane commands can reach the VM and so
+/// the UI can connect to the real SPICE endpoint.
+#[derive(Clone, Default)]
+pub struct VmRuntime {
+    pub spice_port: Option<u16>,
+    pub spice_password: Option<String>,
+    pub qmp_socket_path: Option<PathBuf>,
+}
+
 pub struct VmInstance {
     pub config: VmConfig,
     pub state: VmState,
     pub process: Option<tokio::process::Child>,
     pub pid: Option<u32>,
+    pub runtime: VmRuntime,
 }
 
 pub struct AppState {
     pub vms: RwLock<HashMap<String, Arc<RwLock<VmInstance>>>>,
     pub vm_dir: PathBuf,
+    /// Persistent directory for QMP sockets. Must outlive QEMU processes so
+    /// stop/pause/resume can reconnect.
+    pub socket_dir: PathBuf,
     pub qemu_path: PathBuf,
     pub qemu_img_path: PathBuf,
     pub monitor: MonitoringManager,
@@ -70,24 +83,39 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(vm_dir: PathBuf, qemu_path: PathBuf, qemu_img_path: PathBuf) -> Self {
+        let socket_dir = vm_dir.join(".sockets");
         Self {
             vms: RwLock::new(HashMap::new()),
             vm_dir,
+            socket_dir,
             qemu_path,
             qemu_img_path,
             monitor: MonitoringManager::new(),
             settings: RwLock::new(AppSettings::default()),
+            // Per-command token-bucket limits. Generic default (100/min) plus
+            // purpose-built per-command overrides defined in the limiter.
             rate_limiter: CommandRateLimiter::default(),
         }
     }
 
+    /// Build a launcher bound to the persistent socket directory.
+    pub fn launcher(&self) -> Result<QemuLauncher, String> {
+        QemuLauncher::new(self.qemu_path.clone(), self.socket_dir.clone())
+            .map_err(|e| format!("Failed to initialize VM launcher: {}", e))
+    }
+
+    /// Compute the QMP socket path for a VM id (stable across launches).
+    pub fn qmp_socket_path(&self, vm_id: &str) -> PathBuf {
+        self.socket_dir.join(format!("{}.sock", vm_id))
+    }
+
     pub async fn load_persisted_vms(&self) {
         let mut vms = self.vms.write().await;
-        
+
         if let Ok(entries) = std::fs::read_dir(&self.vm_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "toml") {
+                if path.extension().is_some_and(|ext| ext == "toml") {
                     match VmConfig::load(&path) {
                         Ok(config) => {
                             let instance = VmInstance {
@@ -95,6 +123,7 @@ impl AppState {
                                 state: VmState::Stopped,
                                 process: None,
                                 pid: None,
+                                runtime: VmRuntime::default(),
                             };
                             vms.insert(instance.config.id.clone(), Arc::new(RwLock::new(instance)));
                             tracing::info!("Loaded VM config: {:?}", path);
@@ -219,18 +248,22 @@ async fn create_vm(
     if !state.rate_limiter.allow_command("create_vm").await {
         return Err("Rate limit exceeded. Please wait before creating another VM.".to_string());
     }
-    
+
     let mut config = VmConfig::new(&name);
-    
+
     config.hardware.cpu_cores = cpu_cores;
     config.hardware.memory_mb = memory_mb;
     config.storage.disk_size_gb = disk_size_gb;
+
+    // Validate before creating any on-disk artifacts.
+    config.validate().map_err(|e| e.to_string())?;
 
     let disk_path = state.vm_dir.join(&config.id).with_extension("qcow2");
     config.storage.disk_path = disk_path.clone();
 
     let storage = StorageManager::new(state.qemu_img_path.clone());
-    storage.create_disk(&disk_path, disk_size_gb)
+    storage
+        .create_disk(&disk_path, disk_size_gb)
         .map_err(|e: vibe_core::Error| e.to_string())?;
 
     if let Some(iso) = iso_path {
@@ -241,12 +274,19 @@ async fn create_vm(
         if !iso_path_buf.exists() {
             return Err("ISO file does not exist".to_string());
         }
-        let home_dir = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+        let home_dir =
+            dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
         if !is_path_safe(&iso_path_buf, &home_dir) {
-            return Err("ISO path must be within home directory and cannot contain traversal sequences".to_string());
+            return Err(
+                "ISO path must be within home directory and cannot contain traversal sequences"
+                    .to_string(),
+            );
         }
         config.storage.boot_iso = Some(iso_path_buf);
-        audit_log!("Security audit: ISO path validated for VM creation: {}", iso);
+        audit_log!(
+            "Security audit: ISO path validated for VM creation: {}",
+            iso
+        );
     }
 
     let vm = VmInstance {
@@ -254,6 +294,7 @@ async fn create_vm(
         state: VmState::Stopped,
         process: None,
         pid: None,
+        runtime: VmRuntime::default(),
     };
 
     let mut vms = state.vms.write().await;
@@ -268,22 +309,34 @@ async fn create_vm(
 }
 
 #[tauri::command]
-async fn start_vm(
-    vm_id: String,
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<(), String> {
+async fn start_vm(vm_id: String, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    if !state.rate_limiter.allow_command("start_vm").await {
+        return Err("Rate limit exceeded. Please wait before starting another VM.".to_string());
+    }
+
     let vm = {
         let vms = state.vms.read().await;
         let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
         Arc::clone(vm)
     };
 
-    let launcher = QemuLauncher::new(state.qemu_path.clone())
-        .map_err(|e| format!("Failed to initialize VM launcher: {}", e))?;
+    let launcher = state.launcher()?;
     let config = vm.read().await.config.clone();
 
-    let child = launcher.launch(&config).await
+    // Revalidate before handing arguments to QEMU.
+    config.validate().map_err(|e| e.to_string())?;
+
+    let launch = launcher
+        .launch(&config)
+        .await
         .map_err(|e: vibe_core::Error| e.to_string())?;
+
+    let vibe_core::launcher::LaunchResult {
+        child,
+        spice_port,
+        spice_password,
+        qmp_socket_path,
+    } = launch;
 
     let pid = child.id().ok_or("Failed to get PID")?;
 
@@ -291,33 +344,77 @@ async fn start_vm(
     vm_guard.process = Some(child);
     vm_guard.state = VmState::Running;
     vm_guard.pid = Some(pid);
-    
+    vm_guard.runtime = VmRuntime {
+        spice_port: Some(spice_port),
+        spice_password: Some(spice_password),
+        qmp_socket_path: Some(qmp_socket_path),
+    };
+
     drop(vm_guard);
     state.monitor.add_vm(vm_id.clone(), pid).await;
-    
+
     audit_log!("Security: VM started - id={}, pid={}", vm_id, pid);
     tracing::info!("Started VM: {} (PID: {})", vm_id, pid);
     Ok(())
 }
 
 #[tauri::command]
-async fn stop_vm(
-    vm_id: String,
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<(), String> {
-    let vms = state.vms.read().await;
-    let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
-    
-    let qmp = QmpClient::new(&vm_id);
-    let _ = qmp.quit().await;
+async fn stop_vm(vm_id: String, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    if !state.rate_limiter.allow_command("stop_vm").await {
+        return Err("Rate limit exceeded. Please wait before stopping another VM.".to_string());
+    }
 
+    let vm = {
+        let vms = state.vms.read().await;
+        let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
+        Arc::clone(vm)
+    };
+
+    // Prefer graceful shutdown via QMP on the real socket path.
+    let socket_path = vm
+        .read()
+        .await
+        .runtime
+        .qmp_socket_path
+        .clone()
+        .unwrap_or_else(|| state.qmp_socket_path(&vm_id));
+
+    let qmp = QmpClient::with_socket_path(socket_path);
+    if qmp.quit().await.is_ok() {
+        tracing::info!("Sent graceful QMP quit to VM: {}", vm_id);
+        // Allow QEMU a moment to exit cleanly.
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    } else {
+        tracing::warn!("QMP quit failed for VM {}; will force-kill", vm_id);
+    }
+
+    // Fall back to killing the tracked child process and verify termination.
     let mut vm_guard = vm.write().await;
+    if let Some(mut process) = vm_guard.process.take() {
+        match process.try_wait() {
+            Ok(Some(status)) => {
+                tracing::info!("VM {} already exited: {:?}", vm_id, status);
+            }
+            _ => {
+                if let Err(e) = process.kill().await {
+                    tracing::warn!("Failed to kill VM {} process: {}", vm_id, e);
+                }
+                let _ = process.wait().await;
+                tracing::info!("Force-killed VM: {}", vm_id);
+            }
+        }
+    }
     vm_guard.state = VmState::Stopped;
     vm_guard.pid = None;
-    
+    vm_guard.runtime = VmRuntime::default();
+
     drop(vm_guard);
     state.monitor.remove_vm(&vm_id).await;
-    
+
+    // Best-effort cleanup of the stale socket file.
+    let _ = std::fs::remove_file(state.qmp_socket_path(&vm_id));
+
+    audit_log!("Security: VM stopped - id={}", vm_id);
     tracing::info!("Stopped VM: {}", vm_id);
     Ok(())
 }
@@ -338,6 +435,7 @@ pub struct VmMetricsResponse {
     pub vm_id: String,
     pub cpu_percent: f32,
     pub memory_mb: u64,
+    pub memory_percent: f32,
     pub uptime_seconds: u64,
 }
 
@@ -351,6 +449,7 @@ async fn get_vm_metrics(
         vm_id: vm_id.clone(),
         cpu_percent: m.cpu_percent,
         memory_mb: m.memory_mb,
+        memory_percent: m.memory_percent,
         uptime_seconds: m.uptime_seconds,
     }))
 }
@@ -367,6 +466,7 @@ async fn get_all_metrics(
                 vm_id: id,
                 cpu_percent: metrics.cpu_percent,
                 memory_mb: metrics.memory_mb,
+                memory_percent: metrics.memory_percent,
                 uptime_seconds: metrics.uptime_seconds,
             })
         })
@@ -375,44 +475,41 @@ async fn get_all_metrics(
 }
 
 #[tauri::command]
-async fn delete_vm(
-    vm_id: String,
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<(), String> {
+async fn delete_vm(vm_id: String, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    if !state.rate_limiter.allow_command("delete_vm").await {
+        return Err("Rate limit exceeded. Please wait before deleting another VM.".to_string());
+    }
+
     let vms = state.vms.read().await;
     let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
     let vm_data = vm.read().await;
-    
+
     if vm_data.state == VmState::Running {
         return Err("Cannot delete a running VM. Please stop it first.".to_string());
     }
-    
+
     let disk_path = vm_data.config.storage.disk_path.clone();
     drop(vm_data);
     drop(vms);
-    
+
     let mut vms = state.vms.write().await;
-    let vm = vms.remove(&vm_id).ok_or_else(|| "VM not found".to_string())?;
+    let vm = vms
+        .remove(&vm_id)
+        .ok_or_else(|| "VM not found".to_string())?;
     drop(vm);
-    
+
     let _ = std::fs::remove_file(&disk_path);
     let _ = std::fs::remove_file(state.get_config_path(&vm_id));
-    
+
     state.monitor.remove_vm(&vm_id).await;
-    
+
     audit_log!("Security audit: VM deleted: {}", vm_id);
     tracing::info!("Deleted VM: {}", vm_id);
     Ok(())
 }
 
-const MIN_CPU_CORES: u32 = 1;
-const MAX_CPU_CORES: u32 = 32;
-const MIN_MEMORY_MB: u64 = 256;
-const MAX_MEMORY_MB: u64 = 131072;
-const MIN_DISK_GB: u64 = 1;
-const MAX_DISK_GB: u64 = 1024;
-
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn update_vm(
     vm_id: String,
     name: String,
@@ -425,50 +522,42 @@ async fn update_vm(
     display_height: u32,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    if name.is_empty() || name.len() > 255 {
-        return Err("Invalid VM name".to_string());
+    if !state.rate_limiter.allow_command("update_vm").await {
+        return Err("Rate limit exceeded. Please wait before updating another VM.".to_string());
     }
-    if name.chars().any(|c| c.is_control() || c == '/' || c == '\\' || c == ':') {
-        return Err("VM name contains invalid characters".to_string());
-    }
-    if cpu_cores < MIN_CPU_CORES || cpu_cores > MAX_CPU_CORES {
-        return Err(format!("CPU cores must be between {} and {}", MIN_CPU_CORES, MAX_CPU_CORES));
-    }
-    if memory_mb < MIN_MEMORY_MB || memory_mb > MAX_MEMORY_MB {
-        return Err(format!("Memory must be between {} MB and {} MB", MIN_MEMORY_MB, MAX_MEMORY_MB));
-    }
-    if disk_size_gb < MIN_DISK_GB || disk_size_gb > MAX_DISK_GB {
-        return Err(format!("Disk size must be between {} GB and {} GB", MIN_DISK_GB, MAX_DISK_GB));
-    }
-    if display_width < 640 || display_width > 7680 || display_height < 480 || display_height > 4320 {
-        return Err("Invalid display resolution".to_string());
-    }
-    
-    let vms = state.vms.read().await;
-    let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
-    
-    let mut vm_guard = vm.write().await;
-    vm_guard.config.name = name;
-    vm_guard.config.hardware.cpu_cores = cpu_cores;
-    vm_guard.config.hardware.memory_mb = memory_mb;
-    vm_guard.config.storage.disk_size_gb = disk_size_gb;
-    vm_guard.config.network.enabled = network_enabled;
-    let normalized_mode = network_mode.to_lowercase();
-    let network_mode_enum = match normalized_mode.as_str() {
+
+    let network_mode_enum = match network_mode.to_lowercase().as_str() {
         "bridged" => vibe_core::config::NetworkMode::Bridged,
         "shared" => vibe_core::config::NetworkMode::Shared,
         "nat" => vibe_core::config::NetworkMode::Nat,
         _ => return Err("Invalid network_mode. Must be 'nat', 'bridged', or 'shared'".to_string()),
     };
-    vm_guard.config.network.mode = network_mode_enum;
-    vm_guard.config.display.resolution.width = display_width;
-    vm_guard.config.display.resolution.height = display_height;
-    
+
+    let vms = state.vms.read().await;
+    let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
+
+    let mut vm_guard = vm.write().await;
+
+    // Build a candidate config and validate it before committing, so bounds
+    // live in a single place (VmConfig::validate).
+    let mut candidate = vm_guard.config.clone();
+    candidate.name = name;
+    candidate.hardware.cpu_cores = cpu_cores;
+    candidate.hardware.memory_mb = memory_mb;
+    candidate.storage.disk_size_gb = disk_size_gb;
+    candidate.network.enabled = network_enabled;
+    candidate.network.mode = network_mode_enum;
+    candidate.display.resolution.width = display_width;
+    candidate.display.resolution.height = display_height;
+    candidate.validate().map_err(|e| e.to_string())?;
+
+    vm_guard.config = candidate;
+
     drop(vm_guard);
     drop(vms);
-    
+
     state.save_vm_config(&vm_id).await?;
-    
+
     tracing::info!("Updated VM: {}", vm_id);
     audit_log!("Security: VM updated - id={}", vm_id);
     Ok(())
@@ -484,7 +573,7 @@ async fn export_vm(
     if !state.rate_limiter.allow_command("export_vm").await {
         return Err("Rate limit exceeded. Please wait before exporting another VM.".to_string());
     }
-    
+
     let vms = state.vms.read().await;
     let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
     let vm_data = vm.read().await;
@@ -519,9 +608,12 @@ async fn export_vm(
     }
 
     let archive_path = export_dir.join(&archive_name);
-    let archive_path_str = archive_path.to_str()
+    let archive_path_str = archive_path
+        .to_str()
         .ok_or_else(|| "Invalid export path".to_string())?;
-    let temp_dir_str = temp_dir.path().to_str()
+    let temp_dir_str = temp_dir
+        .path()
+        .to_str()
         .ok_or_else(|| "Invalid temp directory path".to_string())?;
 
     let output = std::process::Command::new("tar")
@@ -534,9 +626,13 @@ async fn export_vm(
     }
 
     // TempDir automatically cleans up when dropped
-    
+
     tracing::info!("Exported VM {} to {}", vm_id, archive_path.display());
-    audit_log!("Security: VM exported - id={}, path={}", vm_id, archive_path.display());
+    audit_log!(
+        "Security: VM exported - id={}, path={}",
+        vm_id,
+        archive_path.display()
+    );
     Ok(archive_path.to_string_lossy().to_string())
 }
 
@@ -550,26 +646,26 @@ async fn import_vm(
     if !state.rate_limiter.allow_command("import_vm").await {
         return Err("Rate limit exceeded. Please wait before importing another VM.".to_string());
     }
-    
+
     let archive = PathBuf::from(&archive_path);
     if !archive.exists() {
         return Err("Archive file not found".to_string());
     }
 
     // Inspect archive before extraction for security
-    let archive_info = inspect_archive(&archive)
-        .map_err(|e| format!("Failed to inspect archive: {}", e))?;
-    
+    let archive_info =
+        inspect_archive(&archive).map_err(|e| format!("Failed to inspect archive: {}", e))?;
+
     // Maximum archive size: 50 GB
     const MAX_ARCHIVE_SIZE: u64 = 50 * 1024 * 1024 * 1024;
-    
+
     if !archive_info.is_safe(MAX_ARCHIVE_SIZE) {
         if !archive_info.suspicious_entries.is_empty() {
             return Err("Archive contains suspicious or unsafe paths".to_string());
         }
         return Err("Archive exceeds maximum allowed size (50 GB)".to_string());
     }
-    
+
     tracing::info!(
         "Archive inspection: {} files, {} bytes",
         archive_info.file_count,
@@ -593,9 +689,12 @@ async fn import_vm(
     let temp_dir = create_secure_temp_dir("vibevisor-import-")
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
-    let archive_path_str = archive.to_str()
+    let archive_path_str = archive
+        .to_str()
         .ok_or_else(|| "Invalid archive path".to_string())?;
-    let temp_dir_str = temp_dir.path().to_str()
+    let temp_dir_str = temp_dir
+        .path()
+        .to_str()
         .ok_or_else(|| "Invalid temp directory path".to_string())?;
 
     let output = std::process::Command::new("tar")
@@ -614,13 +713,13 @@ async fn import_vm(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        
+
         // Double-check path safety
         if !is_path_safe(&path, temp_dir.path()) {
             tracing::warn!("Skipping unsafe path: {:?}", path);
             continue;
         }
-        
+
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if name_str.ends_with(".toml") {
@@ -649,8 +748,13 @@ async fn import_vm(
     }
     new_config.storage.disk_path = new_disk_path.clone();
 
+    // Validate the imported configuration before persisting it.
+    new_config.validate().map_err(|e| e.to_string())?;
+
     let new_config_path = import_dir.join(format!("{}.toml", new_id));
-    new_config.save(&new_config_path).map_err(|e| e.to_string())?;
+    new_config
+        .save(&new_config_path)
+        .map_err(|e| e.to_string())?;
 
     // TempDir automatically cleans up when dropped
 
@@ -659,57 +763,75 @@ async fn import_vm(
         state: VmState::Stopped,
         process: None,
         pid: None,
+        runtime: VmRuntime::default(),
     };
 
     let mut vms = state.vms.write().await;
     vms.insert(new_id.clone(), Arc::new(RwLock::new(vm)));
 
     tracing::info!("Imported VM as {}", new_id);
-    audit_log!("Security: VM imported - old_id={}, new_id={}", new_id, new_id);
+    audit_log!(
+        "Security: VM imported - old_id={}, new_id={}",
+        new_id,
+        new_id
+    );
     Ok(new_config)
 }
 
 #[tauri::command]
-async fn pause_vm(
-    vm_id: String,
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<(), String> {
+async fn pause_vm(vm_id: String, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    if !state.rate_limiter.allow_command("pause_vm").await {
+        return Err("Rate limit exceeded. Please wait before pausing another VM.".to_string());
+    }
+
     let vms = state.vms.read().await;
     let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
-    
-    let qmp = QmpClient::new(&vm_id);
+
+    let socket_path = vm
+        .read()
+        .await
+        .runtime
+        .qmp_socket_path
+        .clone()
+        .unwrap_or_else(|| state.qmp_socket_path(&vm_id));
+    let qmp = QmpClient::with_socket_path(socket_path);
     qmp.stop().await.map_err(|e| e.to_string())?;
 
     let mut vm_guard = vm.write().await;
     vm_guard.state = VmState::Paused;
-    
+
     tracing::info!("Paused VM: {}", vm_id);
     Ok(())
 }
 
 #[tauri::command]
-async fn resume_vm(
-    vm_id: String,
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<(), String> {
+async fn resume_vm(vm_id: String, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    if !state.rate_limiter.allow_command("resume_vm").await {
+        return Err("Rate limit exceeded. Please wait before resuming another VM.".to_string());
+    }
+
     let vms = state.vms.read().await;
     let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
-    
-    let qmp = QmpClient::new(&vm_id);
+
+    let socket_path = vm
+        .read()
+        .await
+        .runtime
+        .qmp_socket_path
+        .clone()
+        .unwrap_or_else(|| state.qmp_socket_path(&vm_id));
+    let qmp = QmpClient::with_socket_path(socket_path);
     qmp.cont().await.map_err(|e| e.to_string())?;
 
     let mut vm_guard = vm.write().await;
     vm_guard.state = VmState::Running;
-    
+
     tracing::info!("Resumed VM: {}", vm_id);
     Ok(())
 }
 
 #[tauri::command]
-async fn save_vm(
-    vm_id: String,
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<(), String> {
+async fn save_vm(vm_id: String, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
     state.save_vm_config(&vm_id).await
 }
 
@@ -729,24 +851,45 @@ fn suggest_core_allocation(
         prefer_performance,
         memory_mb,
     };
-    
+
     CoreAllocator::new()
         .with_topology(CoreAllocator::detect().unwrap_or_default())
         .suggest_vm_cores(request)
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SpiceCredentials {
+    pub port: u16,
+    pub password: String,
+}
+
+/// Return the real SPICE port the running VM bound to, or an error if the VM
+/// is not running / has no SPICE endpoint yet.
 #[tauri::command]
-fn get_spice_port(vm_id: String) -> u16 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    
-    let mut hasher = DefaultHasher::new();
-    vm_id.hash(&mut hasher);
-    let hash = hasher.finish();
-    
-    let base_port: u16 = 5900;
-    let offset = (hash % 100) as u16;
-    base_port + offset
+async fn get_spice_port(
+    vm_id: String,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<u16, String> {
+    let vms = state.vms.read().await;
+    let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
+    let port = vm.read().await.runtime.spice_port;
+    port.ok_or_else(|| "VM is not running or has no SPICE endpoint".to_string())
+}
+
+/// Return the real SPICE port and the generated ticket password for a running
+/// VM so the client can authenticate to the SPICE server.
+#[tauri::command]
+async fn get_spice_credentials(
+    vm_id: String,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<SpiceCredentials, String> {
+    let vms = state.vms.read().await;
+    let vm = vms.get(&vm_id).ok_or_else(|| "VM not found".to_string())?;
+    let runtime = vm.read().await.runtime.clone();
+    match (runtime.spice_port, runtime.spice_password) {
+        (Some(port), Some(password)) => Ok(SpiceCredentials { port, password }),
+        _ => Err("VM is not running or has no SPICE endpoint".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -774,14 +917,14 @@ fn get_default_settings() -> AppSettings {
 /// Gracefully shutdown all running VMs before exit
 async fn graceful_shutdown(state: &Arc<AppState>) {
     tracing::info!("Starting graceful shutdown...");
-    
+
     // Collect running VMs
     let vms = state.vms.read().await;
     let vm_ids: Vec<String> = vms.keys().cloned().collect();
     drop(vms);
-    
+
     let mut running_vms = Vec::new();
-    
+
     for vm_id in &vm_ids {
         let vms = state.vms.read().await;
         if let Some(vm) = vms.get(vm_id) {
@@ -791,26 +934,33 @@ async fn graceful_shutdown(state: &Arc<AppState>) {
             }
         }
     }
-    
+
     if running_vms.is_empty() {
         tracing::info!("No running VMs to shut down");
         return;
     }
-    
+
     tracing::info!("Stopping {} running VM(s)...", running_vms.len());
-    
+
     for (vm_id, vm) in &running_vms {
         tracing::info!("Stopping VM: {}", vm_id);
-        
-        // Try graceful shutdown via QMP first
-        let qmp = QmpClient::new(vm_id);
+
+        // Try graceful shutdown via QMP first, using the real socket path.
+        let socket_path = vm
+            .read()
+            .await
+            .runtime
+            .qmp_socket_path
+            .clone()
+            .unwrap_or_else(|| state.qmp_socket_path(vm_id));
+        let qmp = QmpClient::with_socket_path(socket_path);
         if qmp.quit().await.is_ok() {
             tracing::info!("Sent graceful shutdown to VM: {}", vm_id);
         }
-        
+
         // Give VM time to shut down gracefully (500ms)
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        
+
         // Force kill if still running
         let mut vm_guard = vm.write().await;
         if let Some(ref mut process) = vm_guard.process {
@@ -821,10 +971,10 @@ async fn graceful_shutdown(state: &Arc<AppState>) {
         vm_guard.process = None;
         vm_guard.pid = None;
         drop(vm_guard);
-        
+
         state.monitor.remove_vm(vm_id).await;
     }
-    
+
     tracing::info!("All VMs stopped. Shutdown complete.");
 }
 
@@ -838,7 +988,7 @@ async fn confirm_and_quit(state: tauri::State<'_, Arc<AppState>>) -> Result<(), 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let settings = AppSettings::load();
-    
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -854,17 +1004,21 @@ pub fn run() {
     let qemu_path = find_qemu_binary("qemu-system-aarch64");
     let qemu_img_path = find_qemu_binary("qemu-img");
 
-    std::fs::create_dir_all(&vm_dir).expect("Failed to create VM directory. Ensure you have write permissions to the data directory.");
+    if let Err(e) = std::fs::create_dir_all(&vm_dir) {
+        tracing::error!(
+            "Failed to create VM directory {:?}: {}. Ensure you have write \
+             permissions to the data directory. Aborting startup.",
+            vm_dir,
+            e
+        );
+        return;
+    }
 
-    let app_state = Arc::new(AppState::new(
-        vm_dir.clone(),
-        qemu_path,
-        qemu_img_path,
-    ));
+    let app_state = Arc::new(AppState::new(vm_dir.clone(), qemu_path, qemu_img_path));
 
     let app_state_clone = Arc::clone(&app_state);
     let minimize_to_tray = settings.minimize_to_tray;
-    
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -878,25 +1032,23 @@ pub fn run() {
 
             let show_item = MenuItem::with_id(app, "show", "Show VibeVisor", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            
+
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("VibeVisor - Apple Silicon VM Manager")
-                .on_menu_event(move |app, event| {
-                    match event.id.as_ref() {
-                        "show" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
                         }
-                        "quit" => {
-                            app.exit(0);
-                        }
-                        _ => {}
                     }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let tauri::tray::TrayIconEvent::DoubleClick { .. } = event {
@@ -925,15 +1077,15 @@ pub fn run() {
                 if let Some(window) = app.get_webview_window("main") {
                     let app_handle = app.handle().clone();
                     let state = Arc::clone(&app_state_clone);
-                    
+
                     window.on_window_event(move |event| {
                         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                             // Prevent immediate close so we can check for running VMs
                             api.prevent_close();
-                            
+
                             let app_handle = app_handle.clone();
                             let state = Arc::clone(&state);
-                            
+
                             // Check for running VMs and show confirmation if needed
                             tauri::async_runtime::spawn(async move {
                                 let vms = state.vms.read().await;
@@ -948,10 +1100,13 @@ pub fn run() {
                                     count
                                 };
                                 drop(vms);
-                                
+
                                 if running_count > 0 {
                                     // Send message to frontend to show confirmation dialog
-                                    let _ = app_handle.emit("close-confirmation-needed", &running_count.to_string());
+                                    let _ = app_handle.emit(
+                                        "close-confirmation-needed",
+                                        &running_count.to_string(),
+                                    );
                                     // Window will be closed by frontend after user confirms
                                 } else {
                                     // No running VMs, just exit
@@ -984,11 +1139,15 @@ pub fn run() {
             get_cpu_topology,
             suggest_core_allocation,
             get_spice_port,
+            get_spice_credentials,
             get_settings,
             save_settings,
             get_default_settings,
             confirm_and_quit,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            tracing::error!("Error while running tauri application: {}", e);
+            std::process::exit(1);
+        });
 }

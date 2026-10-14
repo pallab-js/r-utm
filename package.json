@@ -1,7 +1,7 @@
 {
   "name": "vibevisor",
   "version": "1.0.0",
-  "description": "High-performance virtualization for Apple Silicon",
+  "description": "A lightweight desktop app for running Linux ARM64 VMs on Apple Silicon, built with Rust, Tauri, and QEMU.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -25,7 +25,7 @@
     "aarch64",
     "spice"
   ],
-  "author": "VibeVisor Contributors",
+  "author": "pallab-js",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",

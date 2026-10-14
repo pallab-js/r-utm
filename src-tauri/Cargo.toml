@@ -1,8 +1,8 @@
 [package]
 name = "vibevisor"
 version = "1.0.0"
-description = "High-performance virtualization for Apple Silicon"
-authors = ["VibeVisor Team"]
+description = "A lightweight desktop app for running Linux ARM64 VMs on Apple Silicon, built with Rust, Tauri, and QEMU."
+authors = ["pallab-js"]
 edition = "2021"
 
 [lib]

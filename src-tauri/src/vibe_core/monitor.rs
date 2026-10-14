@@ -14,19 +14,33 @@ pub struct VmMetrics {
 pub struct VmMonitor {
     pid: u32,
     start_time: std::time::Instant,
-    last_cpu_time: u64,
-    last_wall_time: u64,
+    /// Total physical RAM in bytes, used to compute memory_percent.
+    total_memory_bytes: u64,
 }
 
 impl VmMonitor {
     pub fn new(pid: u32) -> Self {
-        let now = std::time::Instant::now();
         Self {
             pid,
-            start_time: now,
-            last_cpu_time: 0,
-            last_wall_time: now.elapsed().as_secs(),
+            start_time: std::time::Instant::now(),
+            total_memory_bytes: Self::total_physical_memory().unwrap_or(0),
         }
+    }
+
+    /// Query total physical memory (bytes) on macOS via `sysctl hw.memsize`.
+    #[cfg(target_os = "macos")]
+    fn total_physical_memory() -> Option<u64> {
+        use std::process::Command;
+        let output = Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn total_physical_memory() -> Option<u64> {
+        None
     }
 
     pub fn collect(&mut self) -> Option<VmMetrics> {
@@ -34,7 +48,7 @@ impl VmMonitor {
         {
             self.collect_macos()
         }
-        
+
         #[cfg(not(target_os = "macos"))]
         {
             None
@@ -43,18 +57,18 @@ impl VmMonitor {
 
     #[cfg(target_os = "macos")]
     fn collect_macos(&mut self) -> Option<VmMetrics> {
-        // Use sysctl for native macOS process monitoring
-        // This avoids spawning external processes
+        // Sample the process's CPU% and resident set size via `ps`. (A future
+        // improvement would be to use libproc's proc_pidinfo to avoid spawning
+        // a child process on every poll.)
         use std::process::Command;
-        
-        // Try native sysctl approach first, fall back to ps if needed
+
         let output = Command::new("ps")
             .args(["-o", "pid=,pcpu=,rss=", "-p", &self.pid.to_string()])
             .output()
             .ok()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+        let parts: Vec<&str> = stdout.split_whitespace().collect();
 
         if parts.len() < 3 {
             return None;
@@ -64,19 +78,19 @@ impl VmMonitor {
         let rss_kb: u64 = parts.get(2)?.parse().ok()?;
         let memory_mb = rss_kb / 1024;
 
-        let now = self.start_time.elapsed().as_secs();
-
-        let metrics = VmMetrics {
-            cpu_percent,
-            memory_mb,
-            memory_percent: 0.0,
-            uptime_seconds: now,
+        // Compute memory as a percentage of total physical RAM.
+        let memory_percent = if self.total_memory_bytes > 0 {
+            ((rss_kb * 1024) as f64 / self.total_memory_bytes as f64 * 100.0) as f32
+        } else {
+            0.0
         };
 
-        self.last_cpu_time = cpu_percent as u64;
-        self.last_wall_time = now;
-
-        Some(metrics)
+        Some(VmMetrics {
+            cpu_percent,
+            memory_mb,
+            memory_percent,
+            uptime_seconds: self.start_time.elapsed().as_secs(),
+        })
     }
 }
 

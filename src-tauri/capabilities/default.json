@@ -26,17 +26,15 @@
     "dialog:allow-save",
     "dialog:allow-message",
     "dialog:allow-ask",
-    "fs:default",
-    "fs:allow-read",
-    "fs:allow-write",
     {
-      "identifier": "fs:scope",
+      "identifier": "fs:allow-read",
+      "allow": [{ "path": "$HOME/**" }]
+    },
+    {
+      "identifier": "fs:allow-write",
       "allow": [
-        "$HOME/**",
-        "$APPDATA/**",
-        "$LOCALAPPDATA/**",
-        "$RESOURCE/**",
-        "$TEMP/**"
+        { "path": "$APPDATA/**" },
+        { "path": "$HOME/Library/Application Support/VibeVisor/**" }
       ]
     }
   ]

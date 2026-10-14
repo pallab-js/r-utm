@@ -17,7 +17,7 @@ impl StorageManager {
         let path_str = path.to_str().ok_or_else(|| {
             crate::vibe_core::Error::Storage("Disk path contains invalid characters".to_string())
         })?;
-        
+
         let output = Command::new(&self.qemu_img_path)
             .args([
                 "create",
@@ -43,7 +43,7 @@ impl StorageManager {
         let disk_path_str = disk_path.to_str().ok_or_else(|| {
             crate::vibe_core::Error::Storage("Disk path contains invalid characters".to_string())
         })?;
-        
+
         let output = Command::new(&self.qemu_img_path)
             .args(["snapshot", "-c", snapshot_name, disk_path_str])
             .output()
@@ -66,7 +66,7 @@ impl StorageManager {
         let disk_path_str = disk_path.to_str().ok_or_else(|| {
             crate::vibe_core::Error::Storage("Disk path contains invalid characters".to_string())
         })?;
-        
+
         let output = Command::new(&self.qemu_img_path)
             .args(["snapshot", "-l", disk_path_str])
             .output()
@@ -98,7 +98,7 @@ impl StorageManager {
         let disk_path_str = disk_path.to_str().ok_or_else(|| {
             crate::vibe_core::Error::Storage("Disk path contains invalid characters".to_string())
         })?;
-        
+
         let output = Command::new(&self.qemu_img_path)
             .args(["snapshot", "-d", snapshot_name, disk_path_str])
             .output()
@@ -116,7 +116,7 @@ impl StorageManager {
         let disk_path_str = disk_path.to_str().ok_or_else(|| {
             crate::vibe_core::Error::Storage("Disk path contains invalid characters".to_string())
         })?;
-        
+
         let output = Command::new(&self.qemu_img_path)
             .args(["info", "--output=json", disk_path_str])
             .output()

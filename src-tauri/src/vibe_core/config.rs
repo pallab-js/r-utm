@@ -107,16 +107,85 @@ impl Default for VmConfig {
 }
 
 impl VmConfig {
+    // Validation bounds (kept in sync with the UI command layer).
+    pub const MIN_CPU_CORES: u32 = 1;
+    pub const MAX_CPU_CORES: u32 = 32;
+    pub const MIN_MEMORY_MB: u64 = 256;
+    pub const MAX_MEMORY_MB: u64 = 131072;
+    pub const MIN_DISK_GB: u64 = 1;
+    pub const MAX_DISK_GB: u64 = 1024;
+    pub const MIN_DISPLAY_W: u32 = 640;
+    pub const MAX_DISPLAY_W: u32 = 7680;
+    pub const MIN_DISPLAY_H: u32 = 480;
+    pub const MAX_DISPLAY_H: u32 = 4320;
+
     pub fn new(name: &str) -> Self {
-        let mut config = Self::default();
-        config.name = name.to_string();
-        config
+        Self {
+            name: name.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Validate that all fields are within supported bounds.
+    ///
+    /// Called on creation, on load from disk, and on import so that an
+    /// out-of-range value can never reach the QEMU argument builder.
+    pub fn validate(&self) -> crate::vibe_core::Result<()> {
+        let err = |m: String| crate::vibe_core::Error::Config(m);
+
+        if self.name.trim().is_empty() || self.name.len() > 255 {
+            return Err(err("VM name must be 1-255 characters".to_string()));
+        }
+        if self
+            .name
+            .chars()
+            .any(|c| c.is_control() || c == '/' || c == '\\' || c == ':')
+        {
+            return Err(err("VM name contains invalid characters".to_string()));
+        }
+        if self.id.trim().is_empty() {
+            return Err(err("VM id must not be empty".to_string()));
+        }
+        if !(Self::MIN_CPU_CORES..=Self::MAX_CPU_CORES).contains(&self.hardware.cpu_cores) {
+            return Err(err(format!(
+                "CPU cores must be between {} and {}",
+                Self::MIN_CPU_CORES,
+                Self::MAX_CPU_CORES
+            )));
+        }
+        if !(Self::MIN_MEMORY_MB..=Self::MAX_MEMORY_MB).contains(&self.hardware.memory_mb) {
+            return Err(err(format!(
+                "Memory must be between {} and {} MB",
+                Self::MIN_MEMORY_MB,
+                Self::MAX_MEMORY_MB
+            )));
+        }
+        if !(Self::MIN_DISK_GB..=Self::MAX_DISK_GB).contains(&self.storage.disk_size_gb) {
+            return Err(err(format!(
+                "Disk size must be between {} and {} GB",
+                Self::MIN_DISK_GB,
+                Self::MAX_DISK_GB
+            )));
+        }
+        let w = self.display.resolution.width;
+        let h = self.display.resolution.height;
+        if !(Self::MIN_DISPLAY_W..=Self::MAX_DISPLAY_W).contains(&w)
+            || !(Self::MIN_DISPLAY_H..=Self::MAX_DISPLAY_H).contains(&h)
+        {
+            return Err(err(
+                "Display resolution is out of supported range".to_string()
+            ));
+        }
+        Ok(())
     }
 
     pub fn load(path: &PathBuf) -> crate::vibe_core::Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| crate::vibe_core::Error::Config(e.to_string()))?;
-        toml::from_str(&content).map_err(|e| crate::vibe_core::Error::Config(e.to_string()))
+        let config: Self =
+            toml::from_str(&content).map_err(|e| crate::vibe_core::Error::Config(e.to_string()))?;
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn save(&self, path: &PathBuf) -> crate::vibe_core::Result<()> {
@@ -153,7 +222,8 @@ mod tests {
 
     fn temp_toml_file(content: &str) -> NamedTempFile {
         let mut file = NamedTempFile::new().expect("Failed to create temp file");
-        file.write_all(content.as_bytes()).expect("Failed to write to temp file");
+        file.write_all(content.as_bytes())
+            .expect("Failed to write to temp file");
         file
     }
 
@@ -265,5 +335,46 @@ mod tests {
         let temp_file = temp_toml_file("invalid toml {{{{");
         let result = VmConfig::load(&temp_file.path().to_path_buf());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_accepts_default() {
+        assert!(VmConfig::new("Valid").validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_out_of_range() {
+        let mut config = VmConfig::new("Bad");
+        config.hardware.cpu_cores = 9999;
+        assert!(config.validate().is_err());
+
+        let mut config = VmConfig::new("Bad");
+        config.hardware.memory_mb = 1;
+        assert!(config.validate().is_err());
+
+        let mut config = VmConfig::new("Bad");
+        config.storage.disk_size_gb = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_bad_name() {
+        let mut config = VmConfig::new("ok");
+        config.name = "bad/name".to_string();
+        assert!(config.validate().is_err());
+
+        config.name = String::new();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_load_rejects_out_of_range_config() {
+        // A syntactically valid TOML with an out-of-range value must be
+        // rejected at load time, not silently accepted.
+        let mut config = VmConfig::new("Range");
+        config.hardware.cpu_cores = 999;
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let temp_file = temp_toml_file(&toml_str);
+        assert!(VmConfig::load(&temp_file.path().to_path_buf()).is_err());
     }
 }

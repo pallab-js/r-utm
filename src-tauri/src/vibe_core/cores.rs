@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CpuTopology {
     pub total_cores: u32,
     pub performance_cores: u32,
@@ -71,13 +71,13 @@ impl CoreAllocator {
             .ok()?;
 
         let output = String::from_utf8_lossy(&sysctl_output.stdout);
-        let parts: Vec<&str> = output.trim().split_whitespace().collect();
+        let parts: Vec<&str> = output.split_whitespace().collect();
 
         if parts.len() < 2 {
             return None;
         }
 
-        let p_cores: u32 = parts.get(0)?.parse().ok().unwrap_or(0);
+        let p_cores: u32 = parts.first()?.parse().ok().unwrap_or(0);
         let e_cores: u32 = parts.get(1)?.parse().ok().unwrap_or(0);
         let total: u32 = parts
             .get(2)
@@ -191,17 +191,6 @@ pub struct CoreAllocation {
     pub efficiency_cores: u32,
     pub total: u32,
     pub affinity_hint: String,
-}
-
-impl Default for CpuTopology {
-    fn default() -> Self {
-        Self {
-            total_cores: 0,
-            performance_cores: 0,
-            efficiency_cores: 0,
-            clusters: Vec::new(),
-        }
-    }
 }
 
 #[cfg(test)]

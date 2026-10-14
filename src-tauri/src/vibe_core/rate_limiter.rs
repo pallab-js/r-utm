@@ -63,17 +63,27 @@ impl RateLimitState {
     fn remaining(&self) -> u32 {
         let now = Instant::now();
         let window = Duration::from_secs(self.config.window_seconds);
-        let active = self.requests.iter().filter(|&&t| now.duration_since(t) < window).count();
+        let active = self
+            .requests
+            .iter()
+            .filter(|&&t| now.duration_since(t) < window)
+            .count();
         self.config.max_requests.saturating_sub(active as u32)
     }
 }
 
-/// Global rate limiter for all Tauri commands
+/// Global rate limiter for all Tauri commands.
+///
+/// Supports a generic default plus per-command overrides so that expensive
+/// operations (VM creation, import/export) can be limited more strictly than
+/// cheap state transitions.
 pub struct CommandRateLimiter {
     /// Per-command rate limiting state
     limiters: Arc<Mutex<HashMap<String, RateLimitState>>>,
-    /// Default configuration
+    /// Default configuration applied to commands without an override
     default_config: RateLimitConfig,
+    /// Per-command configuration overrides
+    overrides: HashMap<String, RateLimitConfig>,
 }
 
 impl CommandRateLimiter {
@@ -81,15 +91,42 @@ impl CommandRateLimiter {
         Self {
             limiters: Arc::new(Mutex::new(HashMap::new())),
             default_config,
+            overrides: Self::default_overrides(),
         }
+    }
+
+    /// Purpose-built per-command limits.
+    ///
+    /// These replace the previous unused preset constructors and are actually
+    /// consulted on every `allow_command` call.
+    fn default_overrides() -> HashMap<String, RateLimitConfig> {
+        let mut m = HashMap::new();
+        // VM creation: 5 per 5 minutes.
+        m.insert("create_vm".to_string(), RateLimitConfig::new(5, 300));
+        // Import/export (migration): 3 per 5 minutes.
+        m.insert("import_vm".to_string(), RateLimitConfig::new(3, 300));
+        m.insert("export_vm".to_string(), RateLimitConfig::new(3, 300));
+        // Other expensive state changes: 10 per minute.
+        for cmd in ["start_vm", "stop_vm", "delete_vm", "update_vm"] {
+            m.insert(cmd.to_string(), RateLimitConfig::new(10, 60));
+        }
+        m
+    }
+
+    fn config_for(&self, command: &str) -> RateLimitConfig {
+        self.overrides
+            .get(command)
+            .cloned()
+            .unwrap_or_else(|| self.default_config.clone())
     }
 
     /// Check if a command is allowed
     pub async fn allow_command(&self, command: &str) -> bool {
+        let config = self.config_for(command);
         let mut limiters = self.limiters.lock().await;
         let state = limiters
             .entry(command.to_string())
-            .or_insert_with(|| RateLimitState::new(self.default_config.clone()));
+            .or_insert_with(|| RateLimitState::new(config));
         state.allow_request()
     }
 
@@ -99,23 +136,8 @@ impl CommandRateLimiter {
         if let Some(state) = limiters.get(command) {
             state.remaining()
         } else {
-            self.default_config.max_requests
+            self.config_for(command).max_requests
         }
-    }
-
-    /// Create a rate limiter for expensive operations
-    pub fn expensive_operations() -> Self {
-        Self::new(RateLimitConfig::new(10, 60)) // 10 requests per minute
-    }
-
-    /// Create a rate limiter for VM creation
-    pub fn vm_creation() -> Self {
-        Self::new(RateLimitConfig::new(5, 300)) // 5 requests per 5 minutes
-    }
-
-    /// Create a rate limiter for VM import/export
-    pub fn vm_migration() -> Self {
-        Self::new(RateLimitConfig::new(3, 300)) // 3 requests per 5 minutes
     }
 }
 
@@ -164,13 +186,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_different_commands() {
+        // Use command names WITHOUT per-command overrides so the configured
+        // default applies deterministically.
         let limiter = CommandRateLimiter::new(RateLimitConfig::new(2, 60));
 
-        assert!(limiter.allow_command("create_vm").await);
-        assert!(limiter.allow_command("create_vm").await);
-        assert!(!limiter.allow_command("create_vm").await);
+        assert!(limiter.allow_command("custom_a").await);
+        assert!(limiter.allow_command("custom_a").await);
+        assert!(!limiter.allow_command("custom_a").await);
 
         // Different command should still have full quota
-        assert!(limiter.allow_command("delete_vm").await);
+        assert!(limiter.allow_command("custom_b").await);
+    }
+
+    #[tokio::test]
+    async fn test_per_command_override_applies() {
+        // create_vm has a stricter override (5 per 5 min) regardless of the
+        // generic default (100 per min here).
+        let limiter = CommandRateLimiter::new(RateLimitConfig::new(100, 60));
+        for _ in 0..5 {
+            assert!(limiter.allow_command("create_vm").await);
+        }
+        assert!(!limiter.allow_command("create_vm").await);
+
+        // A command with no override uses the generic default.
+        assert!(limiter.allow_command("list_vms").await);
     }
 }

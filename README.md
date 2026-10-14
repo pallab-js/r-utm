@@ -1,181 +1,93 @@
 # VibeVisor
 
 [![CI](https://github.com/pallab-js/r-utm/actions/workflows/ci.yml/badge.svg)](https://github.com/pallab-js/r-utm/actions/workflows/ci.yml)
-[![Security Audit](https://img.shields.io/badge/Security-Audited-brightgreen.svg)](SECURITY.md)
-[![Dependencies](https://img.shields.io/badge/Dependencies-0%20Vulnerabilities-brightgreen.svg)](SECURITY.md)
-[![Tests](https://img.shields.io/badge/Tests-31%20Passing-brightgreen.svg)](src-tauri/src/vibe_core/)
-[![Rust](https://img.shields.io/badge/Rust-Memory%20Safe-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-36%20passing-brightgreen.svg)](src-tauri/src/vibe_core/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> High-performance Linux ARM64 virtualization for Apple Silicon (M1/M2/M3/M4) built with Rust and Tauri.
+A lightweight desktop app for running Linux ARM64 virtual machines on Apple Silicon.
+Built with Rust + Tauri over a QEMU backend, with a Svelte 5 UI.
 
-## Overview
+> **Platform:** macOS 14+ on Apple Silicon (M1–M4). Linux/aarch64 guests only.
 
-VibeVisor is a lightweight, memory-secure virtualization apparatus engineered for running Linux ARM64 VMs on macOS Apple Silicon. It uses a curated QEMU backend with Rust-based control logic for a professional, high-velocity user experience.
-
-**Why VibeVisor?**
-
-- 🚀 **Near-Native Performance**: Leverages Apple's Hypervisor.framework (HVF) for minimal overhead
-- 🔒 **Security-First Design**: Comprehensive hardening with CSPRNG, path validation, rate limiting, and sandboxed processes
-- 🦀 **Rust Backend**: Memory-safe, async orchestration with zero `.unwrap()` calls in production
-- 🎨 **Modern UI**: Svelte 5 with Runes + Tailwind CSS, dark mode aesthetic
-- 💾 **QCOW2 Support**: Snapshot capabilities, linked clones, efficient storage
+---
 
 ## Features
 
-| Category | Features |
-|----------|----------|
-| **Performance** | HVF acceleration, P/E-core allocation, direct kernel boot, SPICE display |
-| **Security** | CSPRNG passwords, path canonicalization, archive inspection, rate limiting, CSP |
-| **Storage** | QCOW2 disk images, snapshots, import/export, linked clones |
-| **Monitoring** | Real-time VM metrics, CPU topology detection, resource usage charts |
-| **UI/UX** | Svelte 5 reactive components, dark mode, responsive design |
+- **Native acceleration** — QEMU with Apple's Hypervisor.framework (HVF).
+- **Full VM lifecycle** — create, start, stop, pause, resume, edit, delete.
+- **QCOW2 storage** — disk images with snapshot support.
+- **SPICE display** — localhost-only, with an auto-generated per-session password.
+- **Live metrics** — per-VM CPU and memory usage.
+- **Import / export** — portable `.tar.gz` bundles with pre-extraction archive inspection.
+- **Security hardening** — CSPRNG passwords, path validation, per-command rate limiting, scoped filesystem capabilities, and a strict CSP.
 
 ## Requirements
 
-- **macOS**: 14.0+ (Sonoma or later)
-- **Hardware**: Apple Silicon (M1/M2/M3/M4)
-- **Tools**: Xcode Command Line Tools
-- **QEMU**: 9.0+ (aarch64)
-
-## Quick Start
-
-### 1. Install Dependencies
+| Dependency | Version |
+|------------|---------|
+| macOS      | 14.0+ (Apple Silicon) |
+| QEMU       | 9.0+ (`qemu-system-aarch64`, `qemu-img`) |
+| Node.js    | 20+ |
+| Rust       | stable toolchain |
 
 ```bash
-# Install QEMU (required for VM execution)
 brew install qemu
-
-# Or build from source for optimal performance
-./src-tauri/sidecars/qemu/build-qemu.sh
 ```
 
-### 2. Clone & Setup
+## Quick Start
 
 ```bash
 git clone https://github.com/pallab-js/r-utm.git
 cd r-utm
 npm install
+
+npm run tauri dev      # run in development
+npm run tauri build    # build a release bundle
 ```
 
-### 3. Development
+Release artifacts are written to `src-tauri/target/release/bundle/`.
 
-```bash
-# Start the development server with hot reload
-npm run tauri dev
-```
-
-### 4. Production Build
-
-```bash
-# Build the production application
-npm run tauri build
-```
-
-The built application will be in `src-tauri/target/release/bundle/`.
-
-## Project Structure
+## Project Layout
 
 ```
 r-utm/
-├── src/                          # Frontend (Svelte 5)
-│   ├── app.css                   # Tailwind CSS styles
-│   ├── app.html                  # HTML template
-│   ├── routes/                   # SvelteKit routes
-│   │   ├── +page.svelte          # Main VM management UI
-│   │   └── +layout.svelte        # Layout wrapper
+├── src/                       # Frontend (SvelteKit + Svelte 5 Runes)
+│   ├── routes/+page.svelte    # Main VM management UI
 │   └── lib/
-│       ├── components/           # Reusable UI components
-│       │   ├── Chart.svelte      # Metrics visualization
-│       │   ├── CreateVmWizard.svelte
-│       │   ├── EditVmModal.svelte
-│       │   ├── Settings.svelte
-│       │   └── SpiceDisplay.svelte
-│       └── stores/
-│           └── metrics.ts        # VM metrics store
+│       ├── components/        # Chart, CreateVmWizard, EditVmModal,
+│       │                      #   Settings, SpiceDisplay
+│       └── stores/metrics.ts  # Reactive metrics store
 │
-├── src-tauri/                    # Backend (Rust/Tauri 2)
-│   ├── src/
-│   │   ├── lib.rs                # Tauri commands + AppState
-│   │   ├── main.rs               # Entry point
-│   │   └── vibe_core/            # Core modules
-│   │       ├── config.rs         # TOML VM configuration
-│   │       ├── launcher.rs       # QEMU process launcher
-│   │       ├── qmp.rs            # QMP client (Unix sockets)
-│   │       ├── storage.rs        # QCOW2 management
-│   │       ├── monitor.rs        # VM monitoring
-│   │       ├── kernel.rs         # Direct kernel boot
-│   │       ├── cores.rs          # P/E-core allocation
-│   │       ├── error.rs          # Error types
-│   │       ├── security.rs       # Security utilities
-│   │       └── rate_limiter.rs   # Rate limiting
-│   ├── capabilities/
-│   │   └── default.json          # Tauri permissions
-│   ├── sidecars/qemu/            # QEMU binaries
-│   ├── icons/                    # Application icons
-│   ├── tauri.conf.json           # Tauri configuration
-│   ├── vibe.entitlements         # macOS entitlements
-│   └── Cargo.toml                # Rust dependencies
-│
-├── .github/                      # GitHub configuration
-│   ├── workflows/ci.yml          # CI/CD pipeline
-│   ├── ISSUE_TEMPLATE/           # Issue templates
-│   └── FUNDING.yml               # Sponsorship links
-│
-├── package.json                  # Node.js configuration
-└── vite.config.js                # Vite bundler
+└── src-tauri/                 # Backend (Rust + Tauri 2)
+    ├── src/lib.rs             # Tauri commands + AppState
+    └── src/vibe_core/
+        ├── config.rs          # VM config (TOML) + validation
+        ├── launcher.rs        # QEMU process launcher (HVF, SPICE, QMP)
+        ├── qmp.rs             # QEMU Machine Protocol client (Unix socket)
+        ├── storage.rs         # QCOW2 / snapshot management
+        ├── monitor.rs         # Per-VM CPU/memory metrics
+        ├── kernel.rs          # Direct kernel boot args
+        ├── cores.rs           # Apple Silicon P/E-core allocation
+        ├── security.rs        # CSPRNG, path & archive validation
+        ├── rate_limiter.rs    # Per-command token-bucket limiter
+        └── error.rs           # Error types
 ```
 
-## Architecture
+## Tauri Commands
 
-### Backend (Rust)
-
-The Rust backend provides robust, memory-safe control over QEMU:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Tauri Commands                        │
-│              (lib.rs - Frontend Bridge)                  │
-└─────────────────────────┬───────────────────────────────┘
-                          │
-          ┌───────────────┼───────────────┐
-          │               │               │
-    ┌─────▼─────┐  ┌─────▼─────┐  ┌─────▼─────┐
-    │ launcher  │  │  config   │  │  storage  │
-    │   (QEMU   │  │  (TOML    │  │  (QCOW2   │
-    │  spawn)   │  │  parsing) │  │  mgmt)    │
-    └─────┬─────┘  └───────────┘  └───────────┘
-          │
-    ┌─────▼─────┐
-    │    qmp    │
-    │  (Unix    │
-    │  sockets) │
-    └───────────┘
-```
-
-**Key Modules:**
-- **`vibe-launcher`**: Async QEMU process spawning with HVF acceleration
-- **`vibe-qmp`**: QEMU Machine Protocol client via Unix Domain Sockets
-- **`vibe-storage`**: QCOW2 image management with snapshot support
-- **`vibe-config`**: TOML-based VM configuration serialization
-- **`vibe-security`**: Cryptographic operations and input validation
-- **`vibe-monitor`**: Real-time VM metrics collection
-- **`vibe-cores`**: Apple Silicon P/E-core allocation suggestions
-
-### Frontend (Svelte 5)
-
-The frontend uses Svelte 5's new Runes system for fine-grained reactivity:
-
-- **`$state()`**: Reactive state management
-- **`$derived()`**: Computed values
-- **`$effect()`**: Side effects and subscriptions
-- **Tailwind CSS v4**: Utility-first styling with dark mode
+| Area        | Commands |
+|-------------|----------|
+| CRUD        | `list_vms`, `create_vm`, `update_vm`, `delete_vm` |
+| Lifecycle   | `start_vm`, `stop_vm`, `pause_vm`, `resume_vm`, `get_vm_state` |
+| Migration   | `export_vm`, `import_vm` |
+| Monitoring  | `get_vm_metrics`, `get_all_metrics` |
+| Display     | `get_spice_port`, `get_spice_credentials` |
+| CPU         | `get_cpu_topology`, `suggest_core_allocation` |
+| Settings    | `get_settings`, `save_settings`, `get_default_settings` |
 
 ## Configuration
 
-### VM Configuration (TOML)
-
-VM configurations are stored in `~/Library/Application Support/VibeVisor/vms/`:
+VM configs are stored as TOML in `~/Library/Application Support/VibeVisor/vms/`:
 
 ```toml
 name = "My Linux VM"
@@ -183,147 +95,79 @@ id = "uuid-here"
 architecture = "aarch64"
 
 [hardware]
-cpu_cores = 4
-memory_mb = 4096
+cpu_cores = 4          # 1–32
+memory_mb = 4096       # 256–131072
 cpu_model = "host"
 
 [storage]
 disk_path = "/path/to/disk.qcow2"
-disk_size_gb = 20
+disk_size_gb = 20      # 1–1024
 disk_type = "qcow2"
 snapshot_enabled = true
 
 [network]
 enabled = true
-mode = "nat"
+mode = "nat"           # nat | bridged | shared
 
 [display]
 spice_enabled = true
 resolution = { width = 1920, height = 1080 }
 ```
 
-### App Settings
+App settings live in `~/.config/VibeVisor/settings.toml`.
 
-Application settings are stored in `~/.config/VibeVisor/settings.toml` and can be configured via the Settings UI.
-
-## Supported Guest Operating Systems
-
-| Guest OS | Status | Notes |
-|----------|--------|-------|
-| **Linux (AArch64)** | ✅ Stable | Primary target, recommended |
-| **Windows (ARM64)** | 🧪 Experimental | Limited driver support |
-| **FreeBSD (AArch64)** | 🧪 Experimental | Community supported |
-| **macOS (VM)** | ❌ Not Supported | Licensing restrictions |
-
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Cmd+K` | Open command palette |
-| `Esc` | Close modals/dialogs |
-
-## Troubleshooting
-
-### QEMU Not Found
-
-Ensure QEMU is installed and accessible:
-
-```bash
-which qemu-system-aarch64
-which qemu-img
-```
-
-VibeVisor searches for QEMU in this order:
-1. `/usr/local/bin/`
-2. `/opt/homebrew/bin/` (Homebrew on Apple Silicon)
-3. `src-tauri/sidecars/qemu/` (bundled)
-4. System `PATH`
-
-### Hypervisor Entitlement Missing
-
-The app requires `com.apple.security.hypervisor` entitlement. This is automatically bundled in production builds.
-
-### SPICE Display Issues
-
-- Ensure you're using a SPICE-compatible viewer or the built-in display
-- SPICE is bound to localhost only for security
-- Check firewall settings if connecting remotely
-
-### VM Won't Start
-
-1. Check QEMU is installed: `qemu-system-aarch64 --version`
-2. Verify VM configuration in `~/Library/Application Support/VibeVisor/vms/`
-3. Check logs in the development console or Console.app
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Quick Start for Contributors
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes
-4. Run tests: `npm run check && cd src-tauri && cargo test`
-5. Commit with conventional commit message: `git commit -m 'feat: add amazing feature'`
-6. Push and submit a PR
-
-### Good First Issues
-
-Look for issues labeled [`good-first-issue`](https://github.com/pallab-js/r-utm/labels/good-first-issue) for beginner-friendly tasks.
-
-## Development Commands
+## Development
 
 ```bash
 # Frontend
-npm run dev              # Start dev server
-npm run build            # Build frontend
-npm run check            # Type checking (Svelte)
+npm run dev            # dev server
+npm run check          # Svelte type check
 
-# Backend (Rust)
-cd src-tauri && cargo test       # Run tests
-cd src-tauri && cargo clippy     # Linting
-cd src-tauri && cargo fmt        # Formatting
-
-# Full application
-npm run tauri dev        # Development mode
-npm run tauri build      # Production build
+# Backend
+cd src-tauri
+cargo test             # unit tests
+cargo clippy           # lint
+cargo fmt              # format
 ```
 
-**Before committing:**
+Before committing:
+
 ```bash
-npm run check && cd src-tauri && cargo check --lib --bins && cargo test
+npm run check && cd src-tauri && cargo fmt -- --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ## Security
 
-VibeVisor implements multiple layers of security hardening:
+- SPICE binds to `127.0.0.1` only, with a CSPRNG-generated ticket password per session.
+- All user-supplied paths are canonicalized and confined before being passed to QEMU.
+- Import archives are inspected (size + path-traversal checks) before extraction.
+- State-changing commands are rate-limited via a token bucket.
+- Filesystem access is scoped in `src-tauri/capabilities/default.json`.
+- CI runs `cargo audit` and `npm audit` on every push.
 
-- 🔐 **Cryptographic Security**: CSPRNG-generated passwords with 325+ bits of entropy
-- 🛡️ **Command Injection Prevention**: All paths validated and canonicalized
-- 📁 **Secure Temporary Files**: QMP sockets in restricted directories (`0o700`)
-- 📦 **Archive Inspection**: Pre-extraction validation prevents malicious imports
-- ⏱️ **Rate Limiting**: Token bucket algorithm prevents resource exhaustion
-- 🚫 **Zero `.unwrap()` Calls**: Proper error handling throughout
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
-See our [Security Policy](SECURITY.md) for details, including audit history and vulnerability reporting.
+## Troubleshooting
+
+**QEMU not found** — ensure `qemu-system-aarch64` and `qemu-img` are on your `PATH`.
+VibeVisor searches `/usr/local/bin`, `/opt/homebrew/bin`, the bundled `sidecars/qemu/`, then `PATH`.
+
+**VM won't start** — confirm QEMU runs (`qemu-system-aarch64 --version`) and check the config
+in `~/Library/Application Support/VibeVisor/vms/`.
+
+**SPICE won't connect** — the port and password are generated at launch; retrieve them via
+`get_spice_credentials`. SPICE is localhost-only by design.
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Fork, branch, run the pre-commit checks above, and open a PR with a
+[conventional commit](https://www.conventionalcommits.org/) title.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE) © pallab-js
 
 ## Acknowledgments
 
-- [QEMU](https://www.qemu.org/) - The open-source machine emulator
-- [Tauri](https://tauri.app/) - Build smaller, faster, secure desktop apps
-- [Svelte](https://svelte.dev/) - Cybernetically enhanced web apps
-- [Apple Hypervisor.framework](https://developer.apple.com/documentation/hypervisor) - Native macOS virtualization
-- All our [contributors](https://github.com/pallab-js/r-utm/graphs/contributors)
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=pallab-js/r-utm&type=Date)](https://star-history.com/#pallab-js/r-utm&Date)
-
----
-
-**Made with ❤️ for the Apple Silicon community**
+[QEMU](https://www.qemu.org/) · [Tauri](https://tauri.app/) · [Svelte](https://svelte.dev/) · [Apple Hypervisor.framework](https://developer.apple.com/documentation/hypervisor)
