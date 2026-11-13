@@ -31,6 +31,9 @@ node_modules/
 /playwright-report/
 /blob-report/
 
+# Graphify knowledge-graph outputs (generated)
+/graphify-out/
+
 # Caches & temp
 .cache/
 *.tmp
