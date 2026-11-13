@@ -38,9 +38,53 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   background: var(--color-bg-page);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Consistent, visible keyboard focus for interactive controls. Uses :where()
+   so component-level focus styles (inputs with their own focus border) win. */
+:where(button, a, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(62, 207, 142, 0.3);
+}
+
+/* Slim dark scrollbars so long lists stay on-brand. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #363636 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #363636;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #454545;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }

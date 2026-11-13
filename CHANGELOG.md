@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### 🐛 UI/UX Fixes (Playwright audit)
+
+Verified with a new browser UI test suite (`tests/ui.test.ts` + `tests/tauri-mock.ts`)
+that drives the Svelte frontend in Chromium with a mocked Tauri IPC layer.
+
+#### Critical
+
+- 🐞 **Metrics panel froze the app**: the history `$effect` read and wrote the same
+  state, so every sample triggered `effect_update_depth_exceeded` and the window
+  became unresponsive once a running VM was selected. Samples are now appended in
+  the polling loop and reset when switching or restarting a VM.
+- 🐞 **Close-on-quit prompt always quit**: `message()` resolves to a button label
+  (a truthy string), so the "X VMs are running" confirmation was ignored. It now
+  uses `ask()` with explicit Quit/Stay labels.
+- 🐞 **Delete had no confirmation**: deleting a VM (and its disk) now asks first
+  and respects Cancel.
+- 🐞 **VM display never fitted the window**: the canvas was sized from a circular
+  `height:100%` layout, producing a 1440×1080 bitmap in a 1440×828 area. It is now
+  absolutely positioned, re-measured on mount/resize, and closes with `Esc`.
+
+#### Behaviour
+
+- ✨ Create wizard passes the entered name, CPU, memory and disk size to
+  `create_vm` (previously hardcoded to "New VM"/4/4096/20).
+- ✨ "Empty Disk" now continues to the configuration step instead of creating a VM
+  instantly, and blank names are rejected with an inline error.
+- ✨ Command palette is a working command runner: autofocus, filters as you type,
+  ↑/↓ + Enter navigation, per-VM start/stop/pause/details actions, and an empty
+  "no matches" state. ⌘K is ignored while a modal is open.
+- ✨ Header search, per-VM actions disable while a command is in flight, and the
+  card layout no longer overflows behind the details panel.
+- ✨ Loading skeleton and a retryable error state replace the misleading
+  "No Virtual Machines" screen while `list_vms` is pending or failing.
+
+#### Accessibility & polish
+
+- Floating modals use `role="dialog"`, `aria-modal`, labelled titles, focus-in,
+  backdrop click and `Esc` handling.
+- VM cards expose one real selection button instead of `role="button"` wrapping
+  nested buttons; icon-only actions gained `title` tooltips.
+- Global `:focus-visible` ring, dark scrollbars, chart DPR-correct canvases,
+  single-sample charts render a flat line, and the theme control that had no
+  effect is disabled with an explanation.
+
 ## [1.0.0] - 2026-04-06
 
 ### 🛡️ Security Hardening (Production-Ready Release)

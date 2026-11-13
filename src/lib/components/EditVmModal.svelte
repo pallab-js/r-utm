@@ -48,6 +48,8 @@
 
   let saving = $state(false);
   let error = $state<string | null>(null);
+  let nameInput = $state<HTMLInputElement | null>(null);
+  let errorBanner = $state<HTMLDivElement | null>(null);
 
   const resolutionPresets = [
     { label: "1920x1080 (Full HD)", width: 1920, height: 1080 },
@@ -62,7 +64,25 @@
     displayHeight = height;
   }
 
+  /** Bring the error into view and focus the offending field. */
+  function showError(focus: "name" | undefined = undefined) {
+    queueMicrotask(() => {
+      errorBanner?.scrollIntoView({ block: "nearest" });
+      if (focus === "name") nameInput?.focus();
+    });
+  }
+
   async function handleSave() {
+    if (!name.trim()) {
+      error = "A name is required.";
+      showError("name");
+      return;
+    }
+    if (!Number.isFinite(cpuCores) || cpuCores < 1 || !Number.isFinite(memoryMb) || memoryMb < 256 || !Number.isFinite(diskSizeGb) || diskSizeGb < 1) {
+      error = "CPU cores, memory and disk size must be positive numbers.";
+      showError();
+      return;
+    }
     saving = true;
     error = null;
     try {
@@ -102,13 +122,18 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="fixed inset-0 z-50 flex items-center justify-center">
+<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
   <button aria-label="Close backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm" onclick={onClose}></button>
-  
-  <div class="relative w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col bg-[#171717] border border-[#2e2e2e] rounded-[16px]">
+
+  <div
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="edit-vm-title"
+    class="relative w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col bg-[#171717] border border-[#2e2e2e] rounded-[16px] shadow-2xl"
+  >
     <div class="p-6 border-b border-[#2e2e2e] flex items-center justify-between shrink-0">
       <div>
-        <h2 class="text-xl font-medium text-white">Edit VM</h2>
+        <h2 id="edit-vm-title" class="text-xl font-medium text-white">Edit VM</h2>
         <p class="text-sm text-[#898989] mt-1">Configure {vm.name}</p>
       </div>
       <button
@@ -124,7 +149,11 @@
 
     <div class="flex-1 overflow-auto p-6 space-y-6">
       {#if error}
-        <div class="p-3 rounded-[8px] bg-red-900/50 border border-red-800 text-red-400 text-sm">
+        <div
+          bind:this={errorBanner}
+          role="alert"
+          class="p-3 rounded-[8px] bg-red-900/50 border border-red-800 text-red-400 text-sm"
+        >
           {error}
         </div>
       {/if}
@@ -141,9 +170,10 @@
             <label for="vm-name" class="block text-sm text-[#b4b4b4] mb-2">VM Name</label>
             <input
               id="vm-name"
+              bind:this={nameInput}
               type="text"
               bind:value={name}
-              class="w-full px-3 py-2 rounded-[6px] bg-[#2e2e2e] border border-[#363636] text-white text-sm focus:outline-none focus:border-[#3ecf8e]"
+              class="w-full px-3 py-2 rounded-[6px] bg-[#2e2e2e] border text-white text-sm focus:outline-none {error && !name.trim() ? 'border-red-500' : 'border-[#363636] focus:border-[#3ecf8e]'}"
             />
           </div>
         </div>
@@ -206,7 +236,7 @@
             <input
               type="checkbox"
               bind:checked={networkEnabled}
-              class="w-4 h-4 rounded-[6px] border-[#363636] bg-[#2e2e2e] text-[#3ecf8e] focus:ring-[#3ecf8e]"
+              class="w-4 h-4 rounded-[6px] border-[#363636] bg-[#2e2e2e] accent-[#3ecf8e] focus:ring-[#3ecf8e]"
             />
             <span class="text-sm text-[#b4b4b4]">Enable Network</span>
           </label>

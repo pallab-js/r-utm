@@ -30,6 +30,7 @@
 
   let saving = $state(false);
   let saved = $state(false);
+  let resetNotice = $state(false);
 
   onMount(async () => {
     try {
@@ -51,6 +52,13 @@
     saving = false;
   }
 
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onClose?.();
+    }
+  }
+
   function resetDefaults() {
     settings = {
       default_cpu_cores: 4,
@@ -61,14 +69,29 @@
       auto_start_last_vm: false,
       minimize_to_tray: true,
     };
+    resetNotice = true;
+    setTimeout(() => { resetNotice = false; }, 3000);
   }
 </script>
 
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-  <div class="w-full max-w-2xl bg-[#171717] border border-[#2e2e2e] rounded-[16px] max-h-[90vh] overflow-hidden flex flex-col">
+<svelte:window onkeydown={handleKeydown} />
+
+<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+  <button
+    aria-label="Close settings"
+    class="absolute inset-0 bg-black/60 backdrop-blur-sm"
+    onclick={onClose}
+  ></button>
+
+  <div
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="settings-title"
+    class="relative w-full max-w-2xl bg-[#171717] border border-[#2e2e2e] rounded-[16px] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+  >
     <div class="p-6 border-b border-[#2e2e2e] flex items-center justify-between shrink-0">
       <div>
-        <h2 class="text-xl font-medium text-white">Settings</h2>
+        <h2 id="settings-title" class="text-xl font-medium text-white">Settings</h2>
         <p class="text-sm text-[#898989] mt-1">Configure VibeVisor preferences</p>
       </div>
       <button
@@ -168,12 +191,14 @@
           <select
             id="theme"
             bind:value={settings.theme}
-            class="w-full px-4 py-2.5 rounded-[6px] bg-[#2e2e2e] border border-[#363636] text-white text-sm focus:outline-none focus:border-[#3ecf8e]"
+            disabled
+            class="w-full px-4 py-2.5 rounded-[6px] bg-[#2e2e2e] border border-[#363636] text-white text-sm focus:outline-none focus:border-[#3ecf8e] disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <option value="dark">Dark (Default)</option>
             <option value="light">Light</option>
             <option value="system">System</option>
           </select>
+          <p class="text-xs text-[#898989] mt-2">Only the dark theme is available in this release.</p>
         </div>
       </section>
 
@@ -193,7 +218,7 @@
             </div>
             <div class="relative">
               <input type="checkbox" bind:checked={settings.minimize_to_tray} class="sr-only peer" />
-              <div class="w-11 h-6 bg-[#363636] rounded-full peer peer-checked:bg-[#3ecf8e] transition-colors"></div>
+              <div class="w-11 h-6 bg-[#363636] rounded-full peer peer-checked:bg-[#3ecf8e] peer-focus-visible:ring-2 peer-focus-visible:ring-[#3ecf8e] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-[#171717] transition-colors"></div>
               <div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
             </div>
           </label>
@@ -205,7 +230,7 @@
             </div>
             <div class="relative">
               <input type="checkbox" bind:checked={settings.auto_start_last_vm} class="sr-only peer" />
-              <div class="w-11 h-6 bg-[#363636] rounded-full peer peer-checked:bg-[#3ecf8e] transition-colors"></div>
+              <div class="w-11 h-6 bg-[#363636] rounded-full peer peer-checked:bg-[#3ecf8e] peer-focus-visible:ring-2 peer-focus-visible:ring-[#3ecf8e] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-[#171717] transition-colors"></div>
               <div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
             </div>
           </label>
@@ -222,6 +247,11 @@
       </button>
       
       <div class="flex items-center gap-3">
+        {#if resetNotice}
+          <span class="text-sm text-[#b4b4b4] flex items-center gap-1">
+            Defaults restored — save to apply
+          </span>
+        {/if}
         {#if saved}
           <span class="text-sm text-[#3ecf8e] flex items-center gap-1">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

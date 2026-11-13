@@ -26,6 +26,11 @@ node_modules/
 /coverage/
 .nyc_output/
 
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+
 # Caches & temp
 .cache/
 *.tmp

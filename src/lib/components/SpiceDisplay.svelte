@@ -41,24 +41,28 @@
     const SPICE_CHANNEL_DISPLAY = 2;
 
     onMount(() => {
-        setupCanvas();
+        handleResize();
         connectSpice();
         window.addEventListener("resize", handleResize);
+        requestAnimationFrame(() => {
+            handleResize();
+            container?.focus();
+        });
+        return () => window.removeEventListener("resize", handleResize);
     });
 
     onDestroy(() => {
         disconnect();
-        window.removeEventListener("resize", handleResize);
     });
 
     function handleResize() {
         if (container) {
-            width = container.clientWidth;
-            height = container.clientHeight;
+            width = Math.max(container.clientWidth, 1);
+            height = Math.max(container.clientHeight, 1);
             if (canvas) {
-                canvas.width = width;
-                canvas.height = height;
                 setupCanvas();
+                if (connected) return;
+                drawConnectingScreen(error || (connecting ? "Connecting…" : "Not connected to VM display"));
             }
         }
     }
@@ -69,21 +73,17 @@
         ctx = canvas.getContext("2d");
         if (!ctx) return;
 
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = Math.max(width, 1);
+        canvas.height = Math.max(height, 1);
 
-        imageData = ctx.createImageData(width, height);
+        imageData = ctx.createImageData(canvas.width, canvas.height);
         
         ctx.fillStyle = "#1a1a2e";
-        ctx.fillRect(0, 0, width, height);
-        
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "16px system-ui, -apple-system, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("SPICE Display - Connecting...", width / 2, height / 2);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
     async function connectSpice() {
+        disconnect();
         connecting = true;
         error = null;
         
@@ -103,7 +103,7 @@
                 connected = false;
                 connecting = false;
                 console.log("SPICE WebSocket disconnected");
-                drawConnectingScreen("Disconnected from SPICE server");
+                drawConnectingScreen(error || "Disconnected from SPICE server");
             };
 
             ws.onerror = (e) => {
@@ -126,23 +126,26 @@
     }
 
     function drawConnectingScreen(message: string) {
-        if (!ctx) return;
-        
+        if (!ctx || !canvas) return;
+
+        const w = canvas.width;
+        const h = canvas.height;
+
         ctx.fillStyle = "#1a1a2e";
-        ctx.fillRect(0, 0, width, height);
+        ctx.fillRect(0, 0, w, h);
         
         ctx.fillStyle = "#6366f1";
         ctx.font = "bold 18px system-ui, -apple-system, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("VibeVisor SPICE Display", width / 2, height / 2 - 30);
+        ctx.fillText("VibeVisor SPICE Display", w / 2, h / 2 - 30);
         
         ctx.fillStyle = "#a1a1aa";
         ctx.font = "14px system-ui, -apple-system, sans-serif";
-        ctx.fillText(message, width / 2, height / 2);
+        ctx.fillText(message, w / 2, h / 2);
         
         ctx.fillStyle = "#52525b";
         ctx.font = "12px system-ui, -apple-system, sans-serif";
-        ctx.fillText(`Port: ${spicePort} | VM: ${vmId}`, width / 2, height / 2 + 30);
+        ctx.fillText(`Port: ${spicePort} | VM: ${vmId}`, w / 2, h / 2 + 30);
     }
 
     function disconnect() {
@@ -302,6 +305,11 @@
     }
 
     function handleKeydown(e: KeyboardEvent) {
+        if (e.key === "Escape") {
+            e.preventDefault();
+            onClose?.();
+            return;
+        }
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
         const keyMap: Record<string, number> = {
@@ -428,10 +436,7 @@
     }
 </script>
 
-<div 
-    bind:this={container}
-    class="fixed inset-0 z-50 bg-black flex flex-col"
->
+<div class="fixed inset-0 z-50 bg-black flex flex-col overflow-hidden">
     <div class="h-10 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
         <div class="flex items-center gap-3">
             <span class="w-2 h-2 rounded-full {connected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}"></span>
@@ -443,8 +448,15 @@
         <div class="flex items-center gap-2">
             <span class="text-xs text-neutral-500">{width}x{height}</span>
             <button
+                onclick={() => { disconnect(); connectSpice(); }}
+                class="px-3 py-1 rounded-[6px] bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition-colors"
+            >
+                Reconnect
+            </button>
+            <button
                 onclick={onClose}
-                aria-label="Close"
+                aria-label="Close display"
+                title="Close display (Esc)"
                 class="p-1 rounded hover:bg-neutral-800 text-neutral-400 transition-colors"
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -458,7 +470,7 @@
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div 
         bind:this={container}
-        class="flex-1 relative"
+        class="flex-1 relative min-h-0 overflow-hidden outline-none"
         tabindex="0"
         onkeydown={handleKeydown}
         onkeyup={handleKeyup}
@@ -466,18 +478,19 @@
         onmousedown={handleMouseDown}
         onmouseup={handleMouseUp}
         role="application"
+        aria-label="VM display"
     >
         <canvas
             bind:this={canvas}
             {width}
             {height}
-            class="w-full h-full"
+            class="absolute inset-0 w-full h-full block"
             style="image-rendering: pixelated; cursor: crosshair;"
         ></canvas>
         
         {#if !connected && !connecting}
-            <div class="absolute inset-0 flex items-center justify-center bg-black/80">
-                <div class="text-center max-w-md">
+            <div class="absolute inset-0 flex items-center justify-center bg-[#0f0f0f]">
+                <div class="text-center max-w-md px-6">
                     <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-800 flex items-center justify-center">
                         <svg class="w-8 h-8 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -491,16 +504,30 @@
                             Not connected to VM display
                         {/if}
                     </p>
-                    <p class="text-xs text-neutral-600">
+                    <p class="text-xs text-neutral-600 mb-5">
                         Make sure the VM is running with SPICE enabled
                     </p>
+                    <div class="flex items-center justify-center gap-3">
+                        <button
+                            onclick={() => { disconnect(); connectSpice(); }}
+                            class="px-4 py-2 rounded-[6px] bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm transition-colors"
+                        >
+                            Try again
+                        </button>
+                        <button
+                            onclick={onClose}
+                            class="px-4 py-2 rounded-[6px] bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm transition-colors"
+                        >
+                            Close
+                        </button>
+                    </div>
                 </div>
             </div>
         {/if}
     </div>
     
     <div class="h-8 bg-neutral-900 border-t border-neutral-800 flex items-center justify-between px-4 text-xs text-neutral-500 shrink-0">
-        <span>Click to capture mouse | Esc to release | Keyboard input enabled</span>
+        <span>Keyboard and mouse input are sent to the VM · Esc closes the display</span>
         <span>Port: {spicePort}</span>
     </div>
 </div>

@@ -7,9 +7,13 @@ npm run tauri dev       # Dev server
 npm run tauri build     # Production build
 npm run check           # Svelte type check (0 errors required)
 cd src-tauri && cargo test  # Run Rust unit tests
+npx playwright test     # Browser UI tests (tests/ui.test.ts)
 ```
 
 **Before committing:** `npm run check && cd src-tauri && cargo check --lib --bins && cargo test`
+
+The Playwright suite runs the frontend in Chromium with `tests/tauri-mock.ts`
+standing in for the Rust backend, so it needs no QEMU or built app.
 
 ## Architecture
 
