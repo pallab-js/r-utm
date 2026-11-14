@@ -28,12 +28,14 @@
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
 
+        const styles = getComputedStyle(document.documentElement);
+        const baseline = styles.getPropertyValue("--chart-baseline").trim() || "rgba(255,255,255,0.08)";
         const padding = 2;
         const chartWidth = w - padding * 2;
         const chartHeight = h - padding * 2;
 
         // baseline
-        ctx.strokeStyle = "rgba(255,255,255,0.08)";
+        ctx.strokeStyle = baseline;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(padding, h - padding);
@@ -102,6 +104,6 @@
         bind:this={canvas}
         bind:clientWidth={width}
         bind:clientHeight={height}
-        class="w-full h-[60px] rounded bg-neutral-800/50"
+        class="w-full h-[60px] rounded bg-[var(--color-bg-elevated)]"
     ></canvas>
 </div>

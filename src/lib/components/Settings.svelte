@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import { applyTheme, normalizeTheme, type ThemePreference } from "$lib/theme";
 
   interface AppSettings {
     default_cpu_cores: number;
@@ -31,10 +32,20 @@
   let saving = $state(false);
   let saved = $state(false);
   let resetNotice = $state(false);
+  let persistedTheme = $state("dark");
+
+  function closeSettings() {
+    applyTheme(persistedTheme);
+    window.dispatchEvent(new CustomEvent("vibevisor-theme-changed", { detail: { theme: persistedTheme } }));
+    onClose?.();
+  }
 
   onMount(async () => {
     try {
-      settings = await invoke<AppSettings>("get_default_settings");
+      const loaded = await invoke<AppSettings>("get_default_settings");
+      settings = { ...loaded, theme: normalizeTheme(loaded.theme) };
+      persistedTheme = settings.theme;
+      applyTheme(persistedTheme);
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -44,6 +55,9 @@
     saving = true;
     try {
       await invoke("save_settings", { settings });
+      persistedTheme = settings.theme;
+      applyTheme(settings.theme);
+      window.dispatchEvent(new CustomEvent("vibevisor-theme-changed", { detail: { theme: settings.theme } }));
       saved = true;
       setTimeout(() => { saved = false; }, 2000);
     } catch (e) {
@@ -52,10 +66,17 @@
     saving = false;
   }
 
+  function onThemeChange(e: Event) {
+    const value = normalizeTheme((e.target as HTMLSelectElement).value);
+    settings.theme = value;
+    applyTheme(value);
+    window.dispatchEvent(new CustomEvent("vibevisor-theme-changed", { detail: { theme: value } }));
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.stopPropagation();
-      onClose?.();
+      closeSettings();
     }
   }
 
@@ -69,6 +90,8 @@
       auto_start_last_vm: false,
       minimize_to_tray: true,
     };
+    applyTheme(settings.theme);
+    window.dispatchEvent(new CustomEvent("vibevisor-theme-changed", { detail: { theme: settings.theme } }));
     resetNotice = true;
     setTimeout(() => { resetNotice = false; }, 3000);
   }
@@ -80,7 +103,7 @@
   <button
     aria-label="Close settings"
     class="absolute inset-0 bg-black/60 backdrop-blur-sm"
-    onclick={onClose}
+    onclick={closeSettings}
   ></button>
 
   <div
@@ -95,7 +118,7 @@
         <p class="text-sm text-[#898989] mt-1">Configure VibeVisor preferences</p>
       </div>
       <button
-        onclick={onClose}
+        onclick={closeSettings}
         aria-label="Close"
         class="p-2 rounded-[6px] hover:bg-[#2e2e2e] text-[#b4b4b4] transition-colors"
       >
@@ -190,15 +213,15 @@
           <label for="theme" class="block text-sm text-[#b4b4b4] mb-2">Theme</label>
           <select
             id="theme"
-            bind:value={settings.theme}
-            disabled
-            class="w-full px-4 py-2.5 rounded-[6px] bg-[#2e2e2e] border border-[#363636] text-white text-sm focus:outline-none focus:border-[#3ecf8e] disabled:opacity-60 disabled:cursor-not-allowed"
+            value={settings.theme}
+            onchange={onThemeChange}
+            class="w-full px-4 py-2.5 rounded-[6px] bg-[#2e2e2e] border border-[#363636] text-white text-sm focus:outline-none focus:border-[#3ecf8e]"
           >
-            <option value="dark">Dark (Default)</option>
+            <option value="dark">Dark</option>
             <option value="light">Light</option>
             <option value="system">System</option>
           </select>
-          <p class="text-xs text-[#898989] mt-2">Only the dark theme is available in this release.</p>
+          <p class="text-xs text-[#898989] mt-2">Choose light, dark, or follow your system appearance.</p>
         </div>
       </section>
 
@@ -261,7 +284,7 @@
           </span>
         {/if}
         <button
-          onclick={onClose}
+          onclick={closeSettings}
           class="px-4 py-2 rounded-[6px] bg-[#2e2e2e] text-[#b4b4b4] hover:bg-[#363636] text-sm transition-colors"
         >
           Cancel

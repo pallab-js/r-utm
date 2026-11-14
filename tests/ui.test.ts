@@ -244,10 +244,21 @@ test.describe("Settings", () => {
     await expect(page.getByText("Defaults restored — save to apply")).toBeVisible();
   });
 
-  test("marks the unfinished theme control as unavailable", async ({ page }) => {
+  test("switches theme and persists the choice", async ({ page }) => {
     await boot(page);
     await page.getByRole("button", { name: "Settings" }).click();
-    await expect(page.locator("#theme")).toBeDisabled();
+    const theme = page.locator("#theme");
+    await expect(theme).toBeEnabled();
+    await theme.selectOption("light");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await page.getByRole("button", { name: "Save Changes" }).click();
+    await expect(page.getByText("Saved")).toBeVisible();
+
+    const saved = await page.evaluate(() => window.__TAURI_MOCK__.savedSettings());
+    expect(saved.theme).toBe("light");
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 });
 
